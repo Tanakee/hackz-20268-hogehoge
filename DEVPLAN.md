@@ -8,7 +8,7 @@
 
 PICO 4 Ultra上で動作するWebXR製の雨避けMRゲーム。
 プレイヤーはパススルーで見える現実世界の中でゆっくり降る雨を避ける。
-クリア後、実際の雨速（約6〜9 m/s）に倍速したリプレイ映像を三人称で見て「本物の雨をリアルタイムで避けていた」驚きを体験する。
+クリア後、実際の雨速（約6〜9 m/s）に倍速したリプレイ映像を三人称で見て「まるで本物の雨を避けていたかのように見える」驚きを体験する。
 
 ---
 
@@ -30,7 +30,7 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMRゲーム。
 
 | 役割 | 担当範囲 |
 |------|---------|
-| **ゲーム処理** | 物理・当たり判定・状態管理・録画・リプレイロジック・WebXRトラッキング・フリーカメラ制御 |
+| **ゲーム処理** | 物理・当たり判定・状態管理・録画・リプレイロジック・WebXRトラッキング |
 | **演出** | 雨の見た目・アバター・UI/HUD・SE・リプレイ画面演出 |
 
 ---
@@ -82,7 +82,6 @@ core（ゲーム処理）                    presentation（演出）
 ────────────────────────────────     ──────────────────────────────
 RainPhysics.positions（Float32Array）→ RainRenderer が毎フレーム読む
 Replayer.frame（記録データ）          → RainRenderer・PlayerAvatar が読む
-Replayer.cameraTransform             → ReplayCamera が読む
 GameManager.on('hit', payload)       → SoundManager・HUD がリッスン
 GameManager.on('clear')              → ReplayScreen・SoundManager がリッスン
 GameManager.on('gameover')           → ReplayScreen・SoundManager がリッスン
@@ -91,6 +90,7 @@ GameManager.on('stateChange', state) → HUD・StartScreen・ReplayScreen がリ
 
 - `core` 側は `presentation` を直接 import しない
 - `presentation` 側は `core` のデータ/イベントを読むだけ（書き込まない）
+- **リプレイ中に仮想カメラは存在しない**：視点はプレイヤーが被っているHMDの実トラッキングをそのまま使う（ゲーム中と同じレンダリングパイプライン）。アバター・雨は記録データを`local-floor`座標にそのまま再配置するだけで、カメラ制御コンポーネントは作らない
 
 ---
 
