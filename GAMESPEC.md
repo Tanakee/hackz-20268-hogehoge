@@ -131,7 +131,7 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START
 - HUDは**視界に固定追従**（頭の動きに追従して常に視界内に表示）
 - タイマー：残り秒数を数字で表示（`GameManager.timeRemaining` を参照）
 - ライフ：**ハートアイコン3つ**（被弾で1つずつ消える。`GameManager.lives` を参照）
-- **リプレイ中の HUD**：`Replayer.progress`（0〜1）を使った**進行バー**を表示する
+- **リプレイ中の HUD**：`Replayer.frame.livesRemaining` / `.timeRemaining` から、その瞬間の**ハート・残り秒数を復元表示**し、あわせて `Replayer.progress`（0〜1）の**進行バー**も表示する
 - **RESULT 画面**：クリア / ゲームオーバーの見出し ＋ スコア（被弾回数・生存時間）＋「トリガーでもう一度」の案内
 
 ---

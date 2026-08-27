@@ -8,9 +8,10 @@ const PX_H = 224;
 /**
  * 視界追従の HUD。
  *   - PLAYING : ハート（残ライフ）＋ 残り秒数
- *   - REPLAY  : リプレイ進行バー（ctx.replayer.progress を参照）
+ *   - REPLAY  : その瞬間のハート・残り秒数（記録データから復元）＋ 進行バー
  *   - それ以外 : 非表示
- * 値は core の公開プロパティを毎フレーム読むだけ（GameManager.lives / .timeRemaining）。
+ * 値は core の公開プロパティを毎フレーム読むだけ（PLAYING中は GameManager.lives /
+ * .timeRemaining、REPLAY中は Replayer.frame.livesRemaining / .timeRemaining / progress）。
  */
 export class HUD {
   constructor(scene, ctx) {
@@ -38,9 +39,12 @@ export class HUD {
       if (sig !== this._sig) this._drawPlaying(lives, secs);
       this.group.visible = true;
     } else if (state === "REPLAY") {
+      const frame = ctx.replayer?.frame;
       const p = clamp(ctx.replayer?.progress ?? 0, 0, 1);
-      sig = `replay|${p.toFixed(3)}`;
-      if (sig !== this._sig) this._drawReplay(p);
+      const lives = Math.max(0, frame?.livesRemaining ?? 0);
+      const secs = Math.max(0, frame?.timeRemaining ?? 0);
+      sig = `replay|${p.toFixed(3)}|${lives}|${secs.toFixed(1)}`;
+      if (sig !== this._sig) this._drawReplay(p, lives, secs);
       this.group.visible = true;
     } else {
       sig = "hidden";
@@ -73,16 +77,37 @@ export class HUD {
     });
   }
 
-  _drawReplay(progress) {
+  _drawReplay(progress, lives, secs) {
     this.panel.draw((c, w, h) => {
+      // 上段：その瞬間のハート（左）＋ 残り秒数（右）。PLAYING中と同じ値を記録データから復元。
+      const s = 26;
+      const gap = 62;
+      const startX = 40;
+      const heartY = 40;
+      for (let i = 0; i < PLAYER_LIVES; i++) {
+        heartPath(c, startX + i * gap, heartY, s);
+        c.fillStyle = i < lives ? "#ff5b6b" : "#38495f";
+        c.fill();
+      }
+
+      c.fillStyle = "#eaf1ff";
+      c.font = "600 56px system-ui, sans-serif";
+      c.textAlign = "right";
+      c.textBaseline = "alphabetic";
+      c.fillText(secs.toFixed(1), w - 30, 60);
+      c.font = "500 22px system-ui, sans-serif";
+      c.fillStyle = "#8ea3c4";
+      c.fillText("SEC", w - 30, 80);
+
+      // 下段：REPLAYラベル＋進行バー
       c.fillStyle = "#7cc4ff";
-      c.font = "600 34px system-ui, sans-serif";
+      c.font = "600 26px system-ui, sans-serif";
       c.textAlign = "left";
       c.textBaseline = "top";
-      c.fillText("REPLAY", 36, 34);
+      c.fillText("REPLAY", 36, h - 78);
 
       const barX = 36;
-      const barY = h / 2 + 4;
+      const barY = h - 44;
       const barW = w - 72;
       const barH = 22;
       roundRect(c, barX, barY, barW, barH, barH / 2);
