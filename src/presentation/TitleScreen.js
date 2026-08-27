@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GAME_DURATION, PLAYER_LIVES } from "../utils/constants.js";
 
 const REDUCED_MOTION =
   typeof window !== "undefined" &&
@@ -74,7 +75,16 @@ const CFG = {
 
   SHOCKWAVE: true,
   PROMPT_VEIL: true,
-  VEIL_COLOR: 0x0a0e16
+  VEIL_COLOR: 0x0a0e16,
+
+  // ゲームスタート画面としての体裁（HOLD で出る「トリガーで開始」の看板）
+  START_PROMPT: true,
+  PROMPT_LABEL: "トリガーで開始",
+  PROMPT_HINT: `雨をよけろ　—　${GAME_DURATION}秒`,
+  PROMPT_W: 1.02,
+  PROMPT_H: 0.34,
+  PROMPT_GAP: 0.16, // 副題の下端からの間隔(m)
+  PROMPT_PULSE_HZ: 0.9 // 明滅の速さ
 };
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -269,6 +279,9 @@ export class TitleScreen {
     this._paintPanel = this._makePaintPrompt();
     if (this._paintPanel) this.hud.add(this._paintPanel.mesh);
 
+    this._startPrompt = CFG.START_PROMPT ? this._makeStartPrompt() : null;
+    if (this._startPrompt) this.world.add(this._startPrompt.mesh);
+
     // アンカー
     this._anchor = new THREE.Vector3();
     this._anchorYaw = new THREE.Quaternion();
@@ -445,6 +458,57 @@ export class TitleScreen {
     return { mesh, tex };
   }
 
+  /** ゲームスタート画面の「トリガーで開始」看板（ワールド固定・タイトルの下）*/
+  _makeStartPrompt() {
+    const W = 960;
+    const H = Math.round((CFG.PROMPT_H / CFG.PROMPT_W) * W);
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, W, H);
+    // 角丸の半透明バー＋シアンの縁（StartScreen と同系統）
+    const pad = 6;
+    rrect(g, pad, pad, W - pad * 2, H - pad * 2, 22);
+    g.fillStyle = "rgba(8,12,22,0.62)";
+    g.fill();
+    g.lineWidth = 3;
+    g.strokeStyle = "rgba(124,196,255,0.6)";
+    g.stroke();
+
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    // ▶ トリガーで開始
+    g.shadowColor = "#8fd0ff";
+    g.shadowBlur = 22;
+    g.fillStyle = "#eef4ff";
+    g.font = `700 ${Math.round(H * 0.34)}px system-ui, sans-serif`;
+    g.fillText("▶  " + CFG.PROMPT_LABEL, W / 2, H * 0.4);
+    g.shadowBlur = 0;
+    // ヒント
+    g.fillStyle = "#9fb4d6";
+    g.font = `500 ${Math.round(H * 0.16)}px system-ui, sans-serif`;
+    g.fillText(CFG.PROMPT_HINT, W / 2, H * 0.72);
+    // ライフ ♥×n
+    g.fillStyle = "#ff8fa3";
+    g.font = `600 ${Math.round(H * 0.15)}px system-ui, sans-serif`;
+    g.fillText("♥".repeat(Math.max(1, PLAYER_LIVES | 0)), W / 2, H * 0.9);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(CFG.PROMPT_W, CFG.PROMPT_H),
+      new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, toneMapped: false
+      })
+    );
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 12;
+    return { mesh, tex, base: 0 };
+  }
+
   /** アンカー基準ローカル(x,y は目線相対 / z は前方が負) → ワールド */
   _l2w(lx, ly, lz, out) {
     return out.set(lx, ly, lz).applyQuaternion(this._anchorYaw).add(this._anchor);
@@ -483,6 +547,18 @@ export class TitleScreen {
       s.impactHead = 0;
       for (const im of s.impacts) im.set(0, 0, -1);
     }
+
+    // スタート看板を副題の下に（同じロックアップとして並べる）
+    if (this._startPrompt) {
+      const py = CFG.TITLE_Y + CFG.SUB_Y - CFG.SUB_H * 0.5 - CFG.PROMPT_GAP - CFG.PROMPT_H * 0.5;
+      this._l2w(0, py, -CFG.DIST, this._v);
+      this._startPrompt.mesh.position.copy(this._v);
+      this._startPrompt.mesh.quaternion.copy(this._anchorYaw);
+      this._startPrompt.mesh.scale.setScalar(1);
+      this._startPrompt.mesh.material.opacity = 0;
+      this._startPrompt.base = 0;
+    }
+    this._flash = 0;
 
     // 粒のホーム＆フィーダー目標
     const R = CFG.ROOM;
@@ -562,8 +638,12 @@ export class TitleScreen {
         d.bright = 0.12;
       }
     }
-    if (this._veil) this._veil.material.opacity = 0;
+    if (this._veil) this._veil.material.opacity = 0.5;
     if (this._paintPanel) this._paintPanel.mesh.material.opacity = 0;
+    if (this._startPrompt) {
+      this._startPrompt.base = 1;
+      this._startPrompt.mesh.material.opacity = 1;
+    }
   }
 
   _readHands() {
@@ -597,6 +677,7 @@ export class TitleScreen {
     if (!isStart && this._wasStart && this._phase !== "RELEASE" && this._built) {
       this._phase = "RELEASE";
       this._phaseT = 0;
+      this._flash = 1; // 開始の確定フラッシュ
     }
     this._wasStart = isStart;
     if (!this._built) {
@@ -620,6 +701,7 @@ export class TitleScreen {
     }
     this._updateSurfaces(dt);
     this._updateDrips(dt);
+    this._updatePrompt(dt);
     this._render();
   }
 
@@ -694,8 +776,9 @@ export class TitleScreen {
       if (this._paintPanel) {
         this._paintPanel.mesh.material.opacity = (this._paintFade ?? 0.9) * (1 - sm(this._phaseT / 0.5));
       }
-      if (this._veil) {
-        this._veil.material.opacity = 0.5 * (1 - sm(this._phaseT / (CFG.CONDENSE_SEC * 0.6))) * this._vis;
+      if (this._veil) this._veil.material.opacity = 0.5 * this._vis; // 開始プロンプトを隠したままに
+      if (this._startPrompt) {
+        this._startPrompt.base = sm((this._phaseT - CFG.CONDENSE_SEC * 0.55) / (CFG.CONDENSE_SEC * 0.45));
       }
       if (feedersDone && this._title.fillNow > 0.98 && this._sub.fillNow > 0.98) {
         this._phase = "HEARTBEAT";
@@ -736,8 +819,9 @@ export class TitleScreen {
         this._phaseT = 0;
       }
     } else if (P === "HOLD") {
-      if (this._veil) this._veil.material.opacity = 0;
+      if (this._veil) this._veil.material.opacity = 0.5 * this._vis; // 素の StartScreen パネルを隠したまま
       if (this._ring) this._ring.material.opacity = 0;
+      if (this._startPrompt) this._startPrompt.base = 1;
       for (const s of [this._title, this._sub]) {
         s.fillTarget = 1;
         s.mat.uniforms.uOpacity.value = this._vis;
@@ -770,6 +854,8 @@ export class TitleScreen {
         s.fillTarget = 1 - p; // 右→左に引く
         s.mat.uniforms.uOpacity.value = (1 - p) * this._vis;
       }
+      if (this._startPrompt) this._startPrompt.base = 1 - p;
+      if (this._veil) this._veil.material.opacity = 0.5 * (1 - p) * this._vis;
       this._vis = 1 - p;
       if (p >= 1) {
         this._built = false;
@@ -789,6 +875,22 @@ export class TitleScreen {
         s.shadow.material.opacity = 0.5 * o * THREE.MathUtils.clamp((s.fillNow - 0.03) / 0.15, 0, 1);
       }
     }
+  }
+
+  _updatePrompt(dt) {
+    if (!this._startPrompt) return;
+    this._flash = Math.max(0, (this._flash || 0) - dt / 0.3);
+    const sp = this._startPrompt;
+    const w = Math.sin(this._t * Math.PI * 2 * CFG.PROMPT_PULSE_HZ);
+    const targetOp = REDUCED_MOTION ? sp.base : sp.base * (0.82 + 0.18 * w);
+    sp.mesh.material.opacity = THREE.MathUtils.damp(
+      sp.mesh.material.opacity,
+      Math.min(1.2, targetOp + this._flash),
+      16,
+      dt
+    );
+    const sc = (REDUCED_MOTION ? 1 : 1 + 0.015 * w) + this._flash * 0.1;
+    sp.mesh.scale.setScalar(sc);
   }
 
   _updateDrips(dt) {
@@ -919,9 +1021,26 @@ export class TitleScreen {
       this._paintPanel.mesh.material.dispose();
       this._paintPanel.tex.dispose();
     }
+    if (this._startPrompt) {
+      this._startPrompt.mesh.geometry.dispose();
+      this._startPrompt.mesh.material.dispose();
+      this._startPrompt.tex.dispose();
+    }
   }
 }
 
 function easeIn(x) {
   return x <= 0 ? 0 : x >= 1 ? 1 : x * x * x;
+}
+
+/** 角丸矩形パス */
+function rrect(c, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + rr, y);
+  c.arcTo(x + w, y, x + w, y + h, rr);
+  c.arcTo(x + w, y + h, x, y + h, rr);
+  c.arcTo(x, y + h, x, y, rr);
+  c.arcTo(x, y, x + w, y, rr);
+  c.closePath();
 }
