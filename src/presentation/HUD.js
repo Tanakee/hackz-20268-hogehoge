@@ -7,11 +7,13 @@ const PX_H = 224;
 
 /**
  * 視界追従の HUD。
+ *   - READY   : 準備カウントダウン（残り秒数を大きく表示）
  *   - PLAYING : ハート（残ライフ）＋ 残り秒数
  *   - REPLAY  : その瞬間のハート・残り秒数（記録データから復元）＋ 進行バー
  *   - それ以外 : 非表示
- * 値は core の公開プロパティを毎フレーム読むだけ（PLAYING中は GameManager.lives /
- * .timeRemaining、REPLAY中は Replayer.frame.livesRemaining / .timeRemaining / progress）。
+ * 値は core の公開プロパティを毎フレーム読むだけ（READY中は GameManager.readyTimeRemaining、
+ * PLAYING中は GameManager.lives / .timeRemaining、REPLAY中は
+ * Replayer.frame.livesRemaining / .timeRemaining / progress）。
  */
 export class HUD {
   constructor(scene, ctx) {
@@ -32,7 +34,12 @@ export class HUD {
     const state = ctx.game?.state;
     let sig;
 
-    if (state === "PLAYING") {
+    if (state === "READY") {
+      const secondsLeft = Math.max(1, Math.ceil(ctx.game.readyTimeRemaining ?? 0));
+      sig = `ready|${secondsLeft}`;
+      if (sig !== this._sig) this._drawReady(secondsLeft);
+      this.group.visible = true;
+    } else if (state === "PLAYING") {
       const lives = Math.max(0, ctx.game.lives ?? 0);
       const secs = Math.max(0, ctx.game.timeRemaining ?? 0);
       sig = `play|${lives}|${secs.toFixed(1)}`;
@@ -51,6 +58,22 @@ export class HUD {
       this.group.visible = false;
     }
     this._sig = sig;
+  }
+
+  _drawReady(secondsLeft) {
+    this.panel.draw((c, w, h) => {
+      c.fillStyle = "#8ea3c4";
+      c.font = "500 30px system-ui, sans-serif";
+      c.textAlign = "center";
+      c.textBaseline = "alphabetic";
+      c.fillText("準備して", w / 2, h * 0.28);
+
+      c.fillStyle = "#eaf1ff";
+      c.font = "800 140px system-ui, sans-serif";
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillText(String(secondsLeft), w / 2, h * 0.62);
+    });
   }
 
   _drawPlaying(lives, secs) {

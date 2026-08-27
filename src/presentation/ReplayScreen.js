@@ -79,6 +79,10 @@ export class ReplayScreen {
     this._phase = "exit";
     this._t = 0;
     this.scrim.visible = true;
+    // enterフェーズ（見出しパネルのフェードアウト）が完了する前にリプレイが
+    // 終わってしまうケース（記録が短い＝早期GAMEOVER等）があるため、ここで
+    // 確実に隠す。隠さないとStartScreenのRESULT画面と文字が二重に見えてしまう。
+    this.panel.mesh.visible = false;
   }
 
   _drawTitle(outcome) {

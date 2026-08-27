@@ -116,7 +116,9 @@ renderer.setAnimationLoop((time) => {
   const dt = lastTime === null ? 0 : Math.min(0.1, now - lastTime);
   lastTime = now;
 
-  if (game.state === "PLAYING") {
+  if (game.state === "READY") {
+    game.update(dt); // カウントダウンのみ進める。雨・当たり判定・記録はまだ行わない
+  } else if (game.state === "PLAYING") {
     rainPhysics.update(dt);
     game.update(dt);
 

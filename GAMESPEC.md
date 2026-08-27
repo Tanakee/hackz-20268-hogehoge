@@ -29,18 +29,21 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMR（複合現実）ゲーム�
 ### 3.1 状態遷移
 
 ```
-START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START（再挑戦）
+START → READY → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START（再挑戦）
 ```
 
 | 状態 | 内容 |
 |---|---|
 | START | スタート画面。トリガーボタンで開始 |
+| READY | 準備カウントダウン（`READY_DURATION` 秒、初期値3秒）。雨もタイマーも動かない |
 | PLAYING | 雨が降り、避け続ける。制限時間 or ライフ切れで終了 |
 | CLEAR | 制限時間（初期値30秒）を生き残った |
 | GAMEOVER | ライフが0になった |
 | REPLAY | 直前のプレイを記録データから再生 |
 | RESULT | リプレイ後、クリア/ゲームオーバーとスコア（被弾回数・生存時間）を表示する画面。トリガーで START へ |
 
+- START → READY の遷移は、スタート画面のトリガー操作を検知した presentation 側が `GameManager.start()` を呼んで行う
+- READY → PLAYING の遷移は `READY_DURATION` 秒経過後、core が自動で行う（プレイヤーが身構える時間を確保するため。実機フィードバックにより追加）
 - CLEAR・GAMEOVERどちらも同じ演出でREPLAYに遷移する（演出の差異なし）
 - CLEAR/GAMEOVER → REPLAY の遷移は、演出（ReplayScreen）のフェード＋余韻が終わってから `GameManager.startReplay()` を呼んで行う（尺は演出側の管轄）
 - REPLAY → RESULT の遷移は `Replayer` が再生完了時に自分で `GameManager.finishReplay()` を呼んで行う（core内で完結。presentationは`Replayer.isFinished`/`progress`を読むだけでよい）
@@ -64,7 +67,7 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START
 - 降る位置・タイミングは**ランダム**（固定パターンなし）
 - 基本の降下方向は**真上から垂直**
 - 斜め方向の雨は**難易度パラメータとして将来追加**（初期実装では真上のみでOK）
-- 同時に存在する雨粒数：`RAIN_COUNT = 150`（まずこの値で難易度を試し、要調整）
+- 同時に存在する雨粒数：`RAIN_COUNT = 60`（初期値150は実機テストで「多すぎ・避けられない」との評価だったため減量。引き続き要調整）
 - 初期の難易度方針：**「よけられる」ことを最優先**。密度・速度は実機テストしながら調整する前提
 
 ### 4.2 難易度の可変性
@@ -178,15 +181,16 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START
 ## 11. 定数一覧
 
 ```js
-export const RAIN_SPEED_SLOW = 1.5;     // m/s（ゲーム中の見かけの雨速）
+export const RAIN_SPEED_SLOW = 1.1;     // m/s（ゲーム中の見かけの雨速。実機調整で1.5→1.1）
 export const RAIN_SPEED_REAL = 7.0;     // m/s（現実の雨速・リプレイ後の速度）
-export const REPLAY_MULTIPLIER = RAIN_SPEED_REAL / RAIN_SPEED_SLOW; // ≒ 4.67倍
-export const RAIN_COUNT = 150;          // 同時に存在する雨粒数
-export const RAIN_SPAWN_RADIUS = 1.2;   // m（雨の出現半径・xz平面／プレイヤー中心）
+export const REPLAY_MULTIPLIER = RAIN_SPEED_REAL / RAIN_SPEED_SLOW; // ≒ 6.36倍
+export const RAIN_COUNT = 60;           // 同時に存在する雨粒数（実機調整で150→60）
+export const RAIN_SPAWN_RADIUS = 1.5;   // m（雨の出現半径・xz平面／プレイヤー中心。実機調整で1.2→1.5）
 export const RAIN_SPAWN_HEIGHT = 2.2;   // m（雨の出現上限の高さ）
 export const RAIN_GROUND_Y = 0;         // m（この高さで再出現）
 export const PLAYER_HEAD_RADIUS = 0.15; // m
 export const PLAYER_HAND_RADIUS = 0.15; // m（実機調整前提）
 export const GAME_DURATION = 30;        // 秒
 export const PLAYER_LIVES = 3;          // 被弾許容回数
+export const READY_DURATION = 3;        // 秒（START後の準備カウントダウン）
 ```

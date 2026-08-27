@@ -1,7 +1,8 @@
-import { GAME_DURATION, PLAYER_LIVES } from "../utils/constants.js";
+import { GAME_DURATION, PLAYER_LIVES, READY_DURATION } from "../utils/constants.js";
 
 export const GameState = Object.freeze({
   START: "START",
+  READY: "READY",
   PLAYING: "PLAYING",
   CLEAR: "CLEAR",
   GAMEOVER: "GAMEOVER",
@@ -14,7 +15,10 @@ export const GameState = Object.freeze({
  * presentation側はイベント（on）を購読するだけで、GameManagerを書き換えない
  * （例外はライフサイクルメソッド呼び出し：start() / startReplay() / restart()）。
  *
- * 遷移: START → PLAYING → (CLEAR | GAMEOVER) → REPLAY → RESULT → START
+ * 遷移: START → READY → PLAYING → (CLEAR | GAMEOVER) → REPLAY → RESULT → START
+ * - STARTからREADYへの遷移は presentation（スタート画面のトリガー操作）が start() を呼ぶ
+ * - READYからPLAYINGへの遷移は READY_DURATION 秒後に core が自動で行う（準備カウントダウン。
+ *   この間は雨もタイマーも動かない）
  * - CLEAR/GAMEOVERからREPLAYへの遷移は startReplay() を呼んだタイミングで起きる
  *   （被弾/クリア演出の尺は presentation 側の管轄のため、ここでは自動遷移しない）
  * - REPLAYからRESULTへの遷移は Replayer が再生完了時に finishReplay() を呼んで起きる
@@ -28,6 +32,7 @@ export class GameManager {
     this.state = GameState.START;
     this.lives = PLAYER_LIVES;
     this.timeRemaining = GAME_DURATION;
+    this.readyTimeRemaining = READY_DURATION;
     this._listeners = new Map();
   }
 
@@ -48,14 +53,25 @@ export class GameManager {
     this.emit("stateChange", state);
   }
 
+  /** スタート画面のトリガー操作で呼ばれる。すぐにはPLAYINGにせず、READYの準備時間を挟む */
   start() {
     if (this.state !== GameState.START) return;
-    this.lives = PLAYER_LIVES;
-    this.timeRemaining = GAME_DURATION;
-    this._setState(GameState.PLAYING);
+    this.readyTimeRemaining = READY_DURATION;
+    this._setState(GameState.READY);
   }
 
   update(dt) {
+    if (this.state === GameState.READY) {
+      this.readyTimeRemaining -= dt;
+      if (this.readyTimeRemaining <= 0) {
+        this.readyTimeRemaining = 0;
+        this.lives = PLAYER_LIVES;
+        this.timeRemaining = GAME_DURATION;
+        this._setState(GameState.PLAYING);
+      }
+      return;
+    }
+
     if (this.state !== GameState.PLAYING) return;
 
     this.timeRemaining -= dt;
