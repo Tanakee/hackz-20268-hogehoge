@@ -17,8 +17,8 @@ const REDUCED_MOTION =
  *             左→右へ液体の文字が満ちていく。文字は本物のグリフ形なので必ず読める。
  *             膜は絶えずうねり、縁がメニスカスのように光り、下端からしずくが垂れる。
  *   HEARTBEAT タイトル以外の宙の雨が、一瞬(0.42s)だけ“本当の速さ”(7m/s)で落ちて、また止まる
- *   HOLD      水膜が息づき、手前の目隠しが晴れて StartScreen の「トリガーで開始」が読める
- *   RELEASE   START を抜けると水膜が崩れ、粒がほどけて雨に戻りながら落ちて消える
+ *   HOLD      水膜が息づき、下に「▶ トリガーで開始」の看板が出る（明滅）。ゲームのタイトル画面
+ *   RELEASE   トリガーで START を抜けると確定フラッシュ→水膜が崩れ、粒が雨に戻って落ちて消える
  *
  * prefers-reduced-motion のときは即 HOLD（完成形を静止表示）。
  */
@@ -74,8 +74,9 @@ const CFG = {
   REAL_SPEED: 7.0,
 
   SHOCKWAVE: true,
-  PROMPT_VEIL: true,
+  PROMPT_VEIL: true, // 素の StartScreen パネルを隠すためのぼけた暗がり。実機で不要なら false
   VEIL_COLOR: 0x0a0e16,
+  VEIL_OPACITY: 0.7,
 
   // ゲームスタート画面としての体裁（HOLD で出る「トリガーで開始」の看板）
   START_PROMPT: true,
@@ -263,17 +264,31 @@ export class TitleScreen {
     // カメラ子: 開始プロンプトの目隠し・「手を動かして」
     this.hud = new THREE.Group();
     this.camera.add(this.hud);
+    // 目隠し = 素の StartScreen パネルだけを隠す、ふちがぼけた暗がり（板に見えないように）
     this._veil = null;
     if (CFG.PROMPT_VEIL) {
+      const vc = document.createElement("canvas");
+      vc.width = vc.height = 256;
+      const vg = vc.getContext("2d");
+      const grad = vg.createRadialGradient(128, 128, 10, 128, 128, 128);
+      const cc = new THREE.Color(CFG.VEIL_COLOR);
+      const rgb = `${(cc.r * 255) | 0},${(cc.g * 255) | 0},${(cc.b * 255) | 0}`;
+      grad.addColorStop(0, `rgba(${rgb},0.92)`);
+      grad.addColorStop(0.6, `rgba(${rgb},0.55)`);
+      grad.addColorStop(1, `rgba(${rgb},0)`);
+      vg.fillStyle = grad;
+      vg.fillRect(0, 0, 256, 256);
+      const vtex = new THREE.CanvasTexture(vc);
+      vtex.colorSpace = THREE.SRGBColorSpace;
       this._veil = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.3, 0.72),
+        new THREE.PlaneGeometry(1.15, 0.62),
         new THREE.MeshBasicMaterial({
-          color: CFG.VEIL_COLOR, transparent: true, opacity: 0, depthWrite: false,
-          depthTest: false, toneMapped: false
+          map: vtex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, toneMapped: false
         })
       );
-      this._veil.position.set(0, -0.02, -1.36);
+      this._veil.position.set(0, -0.02, -1.38);
       this._veil.renderOrder = 10050;
+      this._veilTex = vtex;
       this.hud.add(this._veil);
     }
     this._paintPanel = this._makePaintPrompt();
@@ -638,7 +653,7 @@ export class TitleScreen {
         d.bright = 0.12;
       }
     }
-    if (this._veil) this._veil.material.opacity = 0.5;
+    if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY;
     if (this._paintPanel) this._paintPanel.mesh.material.opacity = 0;
     if (this._startPrompt) {
       this._startPrompt.base = 1;
@@ -721,7 +736,7 @@ export class TitleScreen {
         this._paintPanel.mesh.material.opacity =
           sm((this._phaseT - CFG.SUSPEND_SEC * 0.6) / (CFG.SUSPEND_SEC * 0.4)) * 0.9;
       }
-      if (this._veil) this._veil.material.opacity = 0.5 * this._vis;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis;
       if (this._phaseT >= CFG.SUSPEND_SEC) {
         this._phase = "PAINT";
         this._phaseT = 0;
@@ -729,7 +744,7 @@ export class TitleScreen {
     } else if (P === "PAINT") {
       this._paint(dt);
       for (const d of this._d) this._shiver(d, 1);
-      if (this._veil) this._veil.material.opacity = 0.5 * this._vis;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis;
       if (this._phaseT >= CFG.PAINT_SEC) {
         for (const d of this._d) d.frozen.copy(d.pos);
         this._paintFade = this._paintPanel ? this._paintPanel.mesh.material.opacity : 0;
@@ -776,7 +791,7 @@ export class TitleScreen {
       if (this._paintPanel) {
         this._paintPanel.mesh.material.opacity = (this._paintFade ?? 0.9) * (1 - sm(this._phaseT / 0.5));
       }
-      if (this._veil) this._veil.material.opacity = 0.5 * this._vis; // 開始プロンプトを隠したままに
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis; // 開始プロンプトを隠したままに
       if (this._startPrompt) {
         this._startPrompt.base = sm((this._phaseT - CFG.CONDENSE_SEC * 0.55) / (CFG.CONDENSE_SEC * 0.45));
       }
@@ -819,7 +834,7 @@ export class TitleScreen {
         this._phaseT = 0;
       }
     } else if (P === "HOLD") {
-      if (this._veil) this._veil.material.opacity = 0.5 * this._vis; // 素の StartScreen パネルを隠したまま
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis; // 素の StartScreen パネルを隠したまま
       if (this._ring) this._ring.material.opacity = 0;
       if (this._startPrompt) this._startPrompt.base = 1;
       for (const s of [this._title, this._sub]) {
@@ -855,7 +870,7 @@ export class TitleScreen {
         s.mat.uniforms.uOpacity.value = (1 - p) * this._vis;
       }
       if (this._startPrompt) this._startPrompt.base = 1 - p;
-      if (this._veil) this._veil.material.opacity = 0.5 * (1 - p) * this._vis;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * (1 - p) * this._vis;
       this._vis = 1 - p;
       if (p >= 1) {
         this._built = false;
@@ -1015,6 +1030,7 @@ export class TitleScreen {
     if (this._veil) {
       this._veil.geometry.dispose();
       this._veil.material.dispose();
+      this._veilTex?.dispose();
     }
     if (this._paintPanel) {
       this._paintPanel.mesh.geometry.dispose();
