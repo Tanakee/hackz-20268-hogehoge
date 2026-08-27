@@ -7,7 +7,7 @@ export const RAIN_COUNT = 60;           // 同時に存在する雨粒数（実�
 // core（RainPhysics）と presentation（RainRenderer の表示範囲・地面の水しぶき位置）が
 // 同じ値を参照できるよう共有定数化。
 export const RAIN_SPAWN_RADIUS = 1.5;   // m（xz平面の出現半径。1.2→1.5へ拡大し密度を下げた）
-export const RAIN_SPAWN_HEIGHT = 2.2;   // m（雨の出現上限の高さ）
+export const RAIN_SPAWN_HEIGHT = 3.0;   // m（雨の出現上限の高さ。実機フィードバックにより2.2→3.0へ引き上げ）
 export const RAIN_GROUND_Y = 0;         // m（この高さまで落ちたら再出現）
 
 export const PLAYER_HEAD_RADIUS = 0.15; // m
