@@ -80,17 +80,46 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMRゲーム。
 ```
 core（ゲーム処理）                    presentation（演出）
 ────────────────────────────────     ──────────────────────────────
-RainPhysics.positions（Float32Array）→ RainRenderer が毎フレーム読む
-Replayer.frame（記録データ）          → RainRenderer・PlayerAvatar が読む
-GameManager.on('hit', payload)       → SoundManager・HUD がリッスン
+RainPhysics.positions（Float32Array）→ RainRenderer が毎フレーム読む（PLAYING中）
+Replayer.frame（補間済みの記録フレーム）→ RainRenderer・PlayerAvatar が読む（REPLAY中）
+Replayer.progress（0〜1）             → HUD が読む（リプレイ進行バー）
+GameManager.on('hit', payload)       → SoundManager・HitEffect・HUD がリッスン
 GameManager.on('clear')              → ReplayScreen・SoundManager がリッスン
 GameManager.on('gameover')           → ReplayScreen・SoundManager がリッスン
 GameManager.on('stateChange', state) → HUD・StartScreen・ReplayScreen がリッスン
 ```
 
 - `core` 側は `presentation` を直接 import しない
-- `presentation` 側は `core` のデータ/イベントを読むだけ（書き込まない）
+- `presentation` 側は `core` のデータ/イベントを**読むだけ**。ただし状態を進める
+  **ライフサイクルメソッド**（`GameManager.start()` / `GameManager.startReplay()`）は
+  presentation から呼ぶ。core のフィールドを直接書き換えることはしない
 - **リプレイ中に仮想カメラは存在しない**：視点はプレイヤーが被っているHMDの実トラッキングをそのまま使う（ゲーム中と同じレンダリングパイプライン）。アバター・雨は記録データを`local-floor`座標にそのまま再配置するだけで、カメラ制御コンポーネントは作らない
+
+### Phase 2 実装の前提（演出↔core 合意事項・2026-08-27）
+
+**モジュールの形（core / presentation 共通）**
+
+- 各モジュール = クラス。`constructor(scene, ctx)` で自分のオブジェクトを `scene` に追加、
+  毎フレーム `update(dt, ctx)` が呼ばれる、`dispose()` で後始末
+- `ctx = { renderer, camera, game, rainPhysics, replayer, controllers }`
+- 毎フレームの呼び出し順：`core.update()` → `presentation.update()` → `renderer.render()`
+- `main.js`（新規・両者を配線する本体）は **Phase 3 で作成**。Phase 2 の間は
+  core / presentation とも `main.js` を触らない（現 `main.js` は Phase 1 の検証用スケルトンのまま）
+
+**イベント / データの詳細**
+
+- `GameManager` は簡易エミッタ：`on(event, handler)` が解除関数を返す。`state` /
+  `lives` / `timeRemaining` は公開プロパティ（HUD は毎フレーム読んでよい）
+- `hit` payload = `{ rainIndex, part: 'head' | 'handLeft' | 'handRight', livesRemaining }`
+  （被弾のワールド座標は含まない）
+- CLEAR/GAMEOVER → REPLAY は **core が自動遷移しない**。演出（ReplayScreen）が
+  フェード＋余韻を終えたタイミングで `game.startReplay()` を呼ぶ。尺は ReplayScreen が持つ
+- REPLAY → 次状態への復帰は `Replayer` が `game.finishReplay()` を呼ぶ（core 内で完結）
+- リプレイのコマ間補間は **core（Replayer）側で行う**。presentation は `replayer.frame` を
+  そのまま描くだけ。`replayer.progress`（0〜1）を HUD が参照する
+- スタート操作：StartScreen が `ctx.controllers` の `selectstart` を検知して `game.start()` を呼ぶ
+- 雨の出現範囲（`RAIN_SPAWN_RADIUS` / `RAIN_SPAWN_HEIGHT` / `RAIN_GROUND_Y`）は
+  `constants.js` に共有定数化済み。core / presentation とも直書きせずここを参照する
 
 ---
 
@@ -119,11 +148,11 @@ main
 
 > **両担当同席で進める**。ここで詰まると全体が止まる。
 
-- [ ] リポジトリ初期化・ディレクトリ構成作成・package.json
-- [ ] Vite + Three.js セットアップ、HTTPS開発サーバー起動確認
-- [ ] **[最重要]** PICO 4 UltraブラウザでWebXR `immersive-ar` セッション（MRパススルー）が動くか実機確認
-- [ ] 頭・コントローラーのトラッキング取得確認
-- [ ] `constants.js` を先に定義（両担当が参照するため最初に確定）
+- [x] リポジトリ初期化・ディレクトリ構成作成・package.json
+- [x] Vite + Three.js セットアップ、HTTPS開発サーバー起動確認
+- [x] **[最重要]** PICO 4 UltraブラウザでWebXR `immersive-ar` セッション（MRパススルー）が動くか実機確認
+- [x] 頭・コントローラーのトラッキング取得確認
+- [x] `constants.js` を先に定義（両担当が参照するため最初に確定）
 
 ### Phase 2：MVP実装（並行開発）
 
@@ -161,7 +190,7 @@ main
 
 | # | 内容 | 担当 |
 |---|------|------|
-| 1 | WebXR `immersive-ar` でPICO 4 Ultraのパススルーが使えるか → Phase 1で実機確認。動かない場合は `immersive-vr` + 宇宙空間背景に切り替え | 共有 |
+| 1 | ~~WebXR `immersive-ar` でPICO 4 Ultraのパススルーが使えるか~~ → **確認済み（動作OK）**。パススルー越しのオブジェクト重畳表示・頭/コントローラーのトラッキングともに実機で確認 | 共有 |
 | 2 | パススルー時のパフォーマンス（雨粒150個のInstancedMesh描画と両立できるか） | ゲーム処理 |
 
 ---
