@@ -73,6 +73,8 @@ export class PlayerAvatar {
     this._qYaw = new THREE.Quaternion();
     this._qYawDamped = new THREE.Quaternion();
     this._up = new THREE.Vector3(0, 1, 0);
+    this._qFix = new THREE.Quaternion();
+    this._eFix = new THREE.Euler();
 
     if (!CFG.ENABLED) return;
 
@@ -115,10 +117,12 @@ export class PlayerAvatar {
       }
     });
 
-    // ボーン解決
+    // ボーン解決。GLTFLoader は node 名の予約文字（. : / [ ]）を除去するため
+    // "Shoulder.L" は "ShoulderL" になる。素の名前・除去版・_置換版・正規化一致の順で探す。
     const missing = [];
+    this._bonesMissing = missing;
     for (const [key, name] of Object.entries(CFG.BONES)) {
-      const bone = this._model.getObjectByName(name);
+      const bone = this._findBone(name);
       if (!bone) missing.push(name);
       this._bones[key] = bone || null;
     }
@@ -170,6 +174,27 @@ export class PlayerAvatar {
     this.ready = true;
   }
 
+  /** GLTFLoader の名前サニタイズ差を吸収してボーンを探す */
+  _findBone(name) {
+    if (!this._model) return null;
+    const candidates = [
+      name,
+      name.replace(/[.:/[\]]/g, ""), // GLTFLoader (PropertyBinding.sanitizeNodeName) は予約文字を除去
+      name.replace(/[.\s]/g, "_") // 一般的な「_ 置換」型のリグ
+    ];
+    for (const c of candidates) {
+      const b = this._model.getObjectByName(c);
+      if (b) return b;
+    }
+    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const want = norm(name);
+    let found = null;
+    this._model.traverse((o) => {
+      if (!found && o.name && norm(o.name) === want) found = o;
+    });
+    return found;
+  }
+
   /** 記録フレーム群から「立ち目線高」を推定（しゃがみに引っ張られないよう分位で取る） */
   _scanEyeHeight(frames) {
     const ys = [];
@@ -203,15 +228,19 @@ export class PlayerAvatar {
     }
     this.group.visible = true;
 
-    // リプレイが差し替わったら身長を測り直す
+    // リプレイが差し替わったら身長を測り直す。
+    // プレイヤーの目線高を人間の範囲に丸め、モデルの素の目線高に合わせて等倍スケール
+    // （モデルが人間離れしたサイズでも吸収する）。
     if (ctx.replayer && ctx.replayer !== this._scannedReplayer) {
       this._scannedReplayer = ctx.replayer;
       const eyeH = this._scanEyeHeight(ctx.replayer.frames || []);
-      this._scaleFactor = THREE.MathUtils.clamp(
-        eyeH / this._modelEyeH,
-        CFG.SCALE_CLAMP[0],
-        CFG.SCALE_CLAMP[1]
+      const wantEyeH = THREE.MathUtils.clamp(
+        eyeH,
+        CFG.EYE_HEIGHT_CLAMP[0],
+        CFG.EYE_HEIGHT_CLAMP[1]
       );
+      const m = this._modelEyeH;
+      this._scaleFactor = m > 0.01 && Number.isFinite(m) ? wantEyeH / m : 1;
       this.group.scale.setScalar(this._scaleFactor);
       if (this._mixer) this._mixer.setTime(0);
     }
@@ -241,10 +270,16 @@ export class PlayerAvatar {
       this.group.updateMatrixWorld(true);
     }
 
-    // 4) 頭の向きを記録どおりに
+    // 4) 頭の向きを記録どおりに（HEAD_FIX_EULER でレスト姿勢差を補正）
     if (this._bones.head && this._bones.head.parent) {
+      this._qFix.setFromEuler(
+        this._eFix.set(CFG.HEAD_FIX_EULER.x, CFG.HEAD_FIX_EULER.y, CFG.HEAD_FIX_EULER.z)
+      );
       this._bones.head.parent.getWorldQuaternion(this._qParent);
-      this._bones.head.quaternion.copy(this._qParent.invert()).multiply(this._qHead);
+      this._bones.head.quaternion
+        .copy(this._qParent.invert())
+        .multiply(this._qHead)
+        .multiply(this._qFix);
       this._bones.head.updateMatrixWorld(true);
     }
 

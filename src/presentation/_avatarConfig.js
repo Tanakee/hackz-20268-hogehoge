@@ -32,13 +32,19 @@ export const IDLE_TIMESCALE = 0.6; // 待機モーションの再生速度（ゆ
 export const HEAD_PERCENTILE = 0.9; // 記録中の head.y のこの分位を「立ち目線高」とする（しゃがみで縮まないように）
 export const EYE_TO_STATURE = 0.936; // 目の高さ / 全身長（フォールバック計算用の目安値）
 export const FALLBACK_STATURE = 1.6; // 記録が無い/異常なときの全身長
-export const SCALE_CLAMP = [0.7, 1.2]; // モデル素の目線高に対する拡縮の許容範囲
+// プレイヤーの目線高をこの範囲に丸めてから、モデルの素の目線高に合わせて等倍スケールする。
+// モデルの素サイズが人間離れしていても（今の avatar.glb は頭が約4.2m）ここに収まる。
+export const EYE_HEIGHT_CLAMP = [1.2, 2.0]; // m
 
 // --- ルート（体全体）の追従 ---
 export const POS_DAMP = 14; // 位置の指数追従係数（大きいほど機敏）
 export const YAW_DAMP = 8; // 向きの指数追従係数
 export const YAW_MAX_RATE = 6; // rad/s。急な首振りで体がスピンしないよう角速度を制限
 export const MODEL_FACE_YAW_OFFSET = 0; // モデルが後ろ向きなら Math.PI を入れる
+
+// 頭ボーンの向き補正（オイラー角ラジアン, XYZ）。記録の頭姿勢を反映したとき顔が
+// 変な方向を向く場合にここで回す（リグのレスト姿勢差の吸収）。ハーネスで詰める。
+export const HEAD_FIX_EULER = { x: 0, y: 0, z: 0 };
 
 // --- 腕 IK ---
 export const ARM_IK = true;
