@@ -30,9 +30,10 @@ const CFG = {
   GLYPH_COLOR: 0xf2f8ff, // 結露した文字
   WAKE_COLOR: 0xffffff, // 手で払われた粒の発光
 
-  COUNT: 2200, // 粒の総数（InstancedMesh・CFG で調整）
-  TITLE_FRAC: 0.5, // うちタイトル文字に使う割合
-  SUB_FRAC: 0.16, // うち副題に使う割合（残りは部屋の雨）
+  COUNT: 2400, // 粒の総数（InstancedMesh・CFG で調整）
+  TITLE_FRAC: 0.46, // うちタイトル文字に使う割合
+  SUB_FRAC: 0.24, // うち副題に使う割合（細いひらがなが潰れないよう多め。残りは部屋の雨）
+  SUB_FAT: 1.9, // 副題の粒を太めに描く倍率（可読性）
 
   SUSPEND_SEC: 2.4,
   PAINT_SEC: 3.4,
@@ -49,9 +50,9 @@ const CFG = {
   WRAP_GAIN: 1.0, // タイトル面の湾曲の強さ（1で自然、0で平面）
   GLASS_JITTER: 0.01, // 結露の厚み方向のばらつき(m)
 
-  SUB_DROP_Y: -0.32, // 副題の中心（タイトル中心からの相対, m）
-  SUB_W: 1.5,
-  SUB_H: 0.12,
+  SUB_DROP_Y: -0.34, // 副題の中心（タイトル中心からの相対, m）
+  SUB_W: 1.42,
+  SUB_H: 0.17, // 縦を少し広げて細いひらがなの画をつぶさない
   SUB_TREMOR: 0.004, // 手書きの震え(m)
 
   ROOM: { x: 2.4, zFront: 2.6, zBack: 1.6, yBot: -1.5, yTop: 2.6 }, // 宙吊りの雨のワールド範囲（背面含む）
@@ -299,9 +300,13 @@ export class TitleScreen {
     cv.height = H;
     const g = cv.getContext("2d");
     g.fillStyle = "#fff";
+    g.strokeStyle = "#fff";
+    g.lineJoin = "round";
+    g.lineWidth = fontPx * 0.09; // 細い画（ひらがなの「よ」等）を太らせてから点群化する
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.font = `800 ${fontPx}px system-ui, sans-serif`;
+    g.strokeText(text, W / 2, H / 2);
     g.fillText(text, W / 2, H / 2);
     const data = g.getImageData(0, 0, W, H).data;
 
@@ -612,7 +617,8 @@ export class TitleScreen {
         dm.scale.set(0, 0, 0);
       } else {
         dm.position.copy(d.pos);
-        dm.scale.set(1, d.len, 1);
+        const fat = d.role === "sub" ? CFG.SUB_FAT : 1;
+        dm.scale.set(fat, d.len, fat);
       }
       dm.updateMatrix();
       this._mesh.setMatrixAt(i, dm.matrix);
