@@ -1,6 +1,11 @@
 /**
  * PLAYING中、毎フレームの頭・手・雨粒位置と被弾イベントを記録する。
  * 記録したフレーム列は Replayer にそのまま渡す。
+ *
+ * リプレイ中にHUD（タイマー・ライフ）を復元できるよう、各フレームの
+ * 残りライフ数（GameManager.lives）も一緒に記録する。残り秒数はここでは
+ * 記録せず、フレームの経過時間 `t` から `GAME_DURATION - t` として
+ * Replayer側で導出する（GAME_DURATIONが変わっても計算し直せるため）。
  */
 export class Recorder {
   constructor() {
@@ -27,8 +32,9 @@ export class Recorder {
    * head / handLeft / handRight: { x, y, z, qx, qy, qz, qw } または null
    * rainPositions: RainPhysics.positions（Float32Array）
    * hits: このフレームで PlayerCollider.findHits() が返した配列（空配列可）
+   * livesRemaining: このフレーム時点の GameManager.lives（HUD復元用）
    */
-  record(dt, head, handLeft, handRight, rainPositions, hits = []) {
+  record(dt, head, handLeft, handRight, rainPositions, hits = [], livesRemaining = null) {
     if (!this._recording) return;
 
     this._elapsed += dt;
@@ -38,7 +44,8 @@ export class Recorder {
       handLeft: handLeft ? { ...handLeft } : null,
       handRight: handRight ? { ...handRight } : null,
       rainPositions: rainPositions.slice(),
-      hits
+      hits,
+      livesRemaining
     });
   }
 
