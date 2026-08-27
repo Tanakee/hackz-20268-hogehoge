@@ -4,6 +4,7 @@ import { HitEffect } from "./HitEffect.js";
 import { HUD } from "./HUD.js";
 import { TitleScreen } from "./TitleScreen.js";
 import { StartScreen } from "./StartScreen.js";
+import { ScorePanel } from "./ScorePanel.js";
 import { ReplayScreen } from "./ReplayScreen.js";
 import { SoundManager } from "./SoundManager.js";
 import { ColliderIndicator } from "./ColliderIndicator.js";
@@ -23,6 +24,7 @@ export function createPresentation(scene, ctx) {
     new HUD(scene, ctx),
     new TitleScreen(scene, ctx),
     new StartScreen(scene, ctx),
+    new ScorePanel(scene, ctx),
     new ReplayScreen(scene, ctx),
     new SoundManager(scene, ctx),
     new ColliderIndicator(scene, ctx)
