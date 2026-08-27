@@ -1,10 +1,14 @@
 import * as THREE from "three";
-import { RAIN_COUNT, REPLAY_MULTIPLIER } from "../utils/constants.js";
+import { RAIN_COUNT, REPLAY_MULTIPLIER, RAIN_DROP_RADIUS } from "../utils/constants.js";
 
 // 雨粒1本の見た目（細い縦ストリーク）。y方向にスケールを掛けて速さを表現する。
+// 半径はcore（PlayerCollider）の当たり判定半径と共有し、見た目と判定を一致させる。
 const STREAK_LENGTH = 0.09; // m（体感速度のときの尾の長さ）
-const STREAK_RADIUS = 0.0045; // m
+const STREAK_RADIUS = RAIN_DROP_RADIUS; // m
 const REPLAY_STREAK_SCALE = Math.min(REPLAY_MULTIPLIER, 3.5); // リプレイ時は尾を伸ばして「速い雨」に見せる
+
+const UP_VECTOR = new THREE.Vector3(0, 1, 0);
+const IDENTITY_QUAT = new THREE.Quaternion();
 
 /**
  * 雨粒を InstancedMesh で描画する。
@@ -12,6 +16,10 @@ const REPLAY_STREAK_SCALE = Math.min(REPLAY_MULTIPLIER, 3.5); // リプレイ時
  *   - PLAYING / CLEAR / GAMEOVER : ctx.rainPhysics.positions（Float32Array, 3要素/粒, local-floor座標）
  *   - REPLAY                     : ctx.replayer.frame.rainPositions（記録データ）
  *   - START / RESULT             : 非表示（プレイ開始前・結果画面中に雨は降らない）
+ * PLAYING/CLEAR/GAMEOVER中、rainPhysics.windX/windZ が非ゼロならストリークの
+ * 向きもその方向へ傾ける（tiltedフラグではなく実際の風速を見る。風速はcore側で
+ * なめらかに遷移するため、傾きもそれに追従して滑らかに変化する）。
+ * リプレイ中の傾き再現は今回のスコープ外（常に垂直で表示する）。
  */
 export class RainRenderer {
   constructor(scene, ctx) {
@@ -41,6 +49,8 @@ export class RainRenderer {
     scene.add(this.mesh);
 
     this._dummy = new THREE.Object3D();
+    this._tiltDir = new THREE.Vector3();
+    this._tiltQuat = new THREE.Quaternion();
   }
 
   /** その時点で読むべき雨の位置配列を返す（無ければ null） */
@@ -63,14 +73,25 @@ export class RainRenderer {
     }
     this.mesh.visible = true;
 
-    const yScale = ctx.game?.state === "REPLAY" ? REPLAY_STREAK_SCALE : 1;
+    const state = ctx.game?.state;
+    const yScale = state === "REPLAY" ? REPLAY_STREAK_SCALE : 1;
     const available = Math.min(this.count, Math.floor(positions.length / 3));
+
+    const rain = ctx.rainPhysics;
+    const windX = rain?.windX ?? 0;
+    const windZ = rain?.windZ ?? 0;
+    const isTilted = state !== "REPLAY" && (windX * windX + windZ * windZ) > 1e-6;
+    if (isTilted) {
+      this._tiltDir.set(windX, -rain.speed, windZ).normalize();
+      this._tiltQuat.setFromUnitVectors(UP_VECTOR, this._tiltDir);
+    }
 
     for (let i = 0; i < this.count; i++) {
       if (i < available) {
         const o = i * 3;
         this._dummy.position.set(positions[o], positions[o + 1], positions[o + 2]);
         this._dummy.scale.set(1, yScale, 1);
+        this._dummy.quaternion.copy(isTilted ? this._tiltQuat : IDENTITY_QUAT);
       } else {
         // 記録フレーム側の粒数が少ない場合は畳んで隠す
         this._dummy.scale.set(0, 0, 0);

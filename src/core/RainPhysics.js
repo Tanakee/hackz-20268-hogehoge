@@ -3,18 +3,33 @@ import {
   RAIN_SPEED_SLOW,
   RAIN_SPAWN_RADIUS,
   RAIN_SPAWN_HEIGHT,
-  RAIN_GROUND_Y
+  RAIN_GROUND_Y,
+  RAIN_RAMP_UP_DURATION,
+  RAIN_MODE_DURATION,
+  RAIN_MODE_TRANSITION,
+  RAIN_TILT_ANGLE_DEG
 } from "../utils/constants.js";
+
+// まだ投入されていない雨粒を、描画にも当たり判定にも影響しない位置に隠しておくための高さ。
+const HIDDEN_Y = -50; // m
+const TILT_ANGLE_RAD = (RAIN_TILT_ANGLE_DEG * Math.PI) / 180;
 
 export class RainPhysics {
   constructor(count = RAIN_COUNT, speed = RAIN_SPEED_SLOW) {
     this.count = count;
     this.speed = speed;
     this.positions = new Float32Array(count * 3);
+    // 目標モード（presentationが見た目のヒントとして参照できるよう公開）。
+    this.tilted = false;
+    // 実際に雨粒に適用される水平速度。目標値へ瞬時に切り替わらず、
+    // RAIN_MODE_TRANSITION秒かけてなめらかに変化する（風が強まる/収まるイメージ）。
+    this.windX = 0; // m/s
+    this.windZ = 0;
     this._resetAll();
   }
 
-  _respawn(index) {
+  /** 指定した雨粒を強制的に再出現させる。被弾した雨粒をその場に留まらせない（多段ヒット防止）ために公開。 */
+  respawn(index) {
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.random() * RAIN_SPAWN_RADIUS;
     const i = index * 3;
@@ -23,21 +38,74 @@ export class RainPhysics {
     this.positions[i + 2] = Math.sin(angle) * radius;
   }
 
+  _hide(index) {
+    const i = index * 3;
+    this.positions[i] = 0;
+    this.positions[i + 1] = HIDDEN_Y;
+    this.positions[i + 2] = 0;
+  }
+
   _resetAll() {
+    this._activeCount = 0;
+    this._spawnTimer = 0;
+    this._spawnInterval = RAIN_RAMP_UP_DURATION / this.count;
+    this._modeTimer = 0;
+    this.tilted = false;
+    this.windX = 0;
+    this.windZ = 0;
+    this._targetWindX = 0;
+    this._targetWindZ = 0;
     for (let i = 0; i < this.count; i++) {
-      this._respawn(i);
-      // 起動直後に全ての雨が同じ高さから降り始めると不自然なため、
-      // 初期化時のみ高さをランダムにばらけさせる。
-      this.positions[i * 3 + 1] = Math.random() * RAIN_SPAWN_HEIGHT;
+      this._hide(i);
     }
   }
 
+  _pickWindTarget() {
+    const dir = Math.random() * Math.PI * 2;
+    const horizontalSpeed = this.speed * Math.tan(TILT_ANGLE_RAD);
+    this._targetWindX = Math.cos(dir) * horizontalSpeed;
+    this._targetWindZ = Math.sin(dir) * horizontalSpeed;
+  }
+
   update(dt) {
-    for (let i = 0; i < this.count; i++) {
-      const yIndex = i * 3 + 1;
-      this.positions[yIndex] -= this.speed * dt;
-      if (this.positions[yIndex] <= RAIN_GROUND_Y) {
-        this._respawn(i);
+    // 垂直/斜めモードをRAIN_MODE_DURATIONごとに切り替える（「風向き」が変わるイメージ）。
+    // 同時に混在させるのは非現実的なため、一括で切り替える。
+    this._modeTimer += dt;
+    if (this._modeTimer >= RAIN_MODE_DURATION) {
+      this._modeTimer = 0;
+      this.tilted = !this.tilted;
+      if (this.tilted) {
+        this._pickWindTarget();
+      } else {
+        this._targetWindX = 0;
+        this._targetWindZ = 0;
+      }
+    }
+
+    // 風速は目標値へ瞬時に切り替えず、RAIN_MODE_TRANSITION秒かけてなめらかに
+    // 近づける（「風が強まる/収まる」ように見せる。実機フィードバックにより追加。
+    // パキッと瞬間的にモードが切り替わるのは不自然という指摘のため）。
+    const ease = Math.min(1, dt / RAIN_MODE_TRANSITION);
+    this.windX += (this._targetWindX - this.windX) * ease;
+    this.windZ += (this._targetWindZ - this.windZ) * ease;
+
+    // 雨粒を上限（count）に達するまで少しずつ投入する。一気に全部出現させると
+    // 「開始直後から囲まれている」「地面到達→再出現のタイミングが揃って段階的に
+    // 降ってくる」という2つの問題が起きるため、投入自体を時間分散させる。
+    this._spawnTimer += dt;
+    while (this._activeCount < this.count && this._spawnTimer >= this._spawnInterval) {
+      this._spawnTimer -= this._spawnInterval;
+      this.respawn(this._activeCount);
+      this._activeCount++;
+    }
+
+    for (let i = 0; i < this._activeCount; i++) {
+      const idx = i * 3;
+      this.positions[idx + 1] -= this.speed * dt;
+      this.positions[idx] += this.windX * dt;
+      this.positions[idx + 2] += this.windZ * dt;
+      if (this.positions[idx + 1] <= RAIN_GROUND_Y) {
+        this.respawn(i);
       }
     }
   }
