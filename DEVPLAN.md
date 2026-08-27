@@ -158,25 +158,25 @@ main
 ### Phase 2：MVP実装（並行開発）
 
 **ゲーム処理担当**
-- [ ] `RainPhysics.js` - 雨粒の位置配列を毎フレーム更新（`positions: Float32Array`）
-- [ ] `PlayerCollider.js` - 頭・手の球コライダー（各0.15m）、雨粒との距離判定
-- [ ] `GameManager.js` - 状態遷移・ライフ管理（3回被弾でGAMEOVER）・タイマー（30秒）・REPLAY終了後の自動START遷移
-- [ ] `Recorder.js` - フレームごとに頭・手・雨粒位置・被弾イベントをバッファに記録
-- [ ] `Replayer.js` - 記録データを `REPLAY_MULTIPLIER` 倍速で再生するイテレーター
+- [x] `RainPhysics.js` - 雨粒の位置配列を毎フレーム更新（`positions: Float32Array`）
+- [x] `PlayerCollider.js` - 頭・手の球コライダー（各0.15m）、雨粒との距離判定
+- [x] `GameManager.js` - 状態遷移・ライフ管理（3回被弾でGAMEOVER）・タイマー（30秒）・RESULT状態を含む状態遷移
+- [x] `Recorder.js` - フレームごとに頭・手・雨粒位置・被弾イベント・残りライフをバッファに記録
+- [x] `Replayer.js` - 記録データを `REPLAY_MULTIPLIER` 倍速で再生するイテレーター（コマ間補間・progress付き）
 
 **演出担当**
-- [ ] `RainRenderer.js` - InstancedMeshで雨粒を描画（位置はPhysicsから受け取るだけ）
-- [ ] `HitEffect.js` - 被弾演出（画面フラッシュ赤点灯 + コントローラー振動）
-- [ ] `HUD.js` - 視界追従UI（ハートアイコン3つ・タイマー）
-- [ ] `StartScreen.js` - VR内スタート画面（トリガーボタンで開始）
-- [ ] `SoundManager.js` - 被弾音・クリア音・雨音ループ（フリー素材）
+- [x] `RainRenderer.js` - InstancedMeshで雨粒を描画（位置はPhysicsから受け取るだけ）
+- [x] `HitEffect.js` - 被弾演出（画面フラッシュ赤点灯 + コントローラー振動）
+- [x] `HUD.js` - 視界追従UI（ハートアイコン3つ・タイマー・リプレイ中の進行バー）
+- [x] `StartScreen.js` - VR内スタート画面（トリガーボタンで開始）＋ RESULT画面兼用
+- [x] `SoundManager.js` - 被弾音・クリア音・雨音ループ（フリー素材）
 
 ### Phase 3：統合（Phase 2完了後）
 
-- [ ] `main.js` でcore/presentationを接続（イベント・データの配線）
-- [ ] PLAYING → CLEAR/GAMEOVER → REPLAY → START（自動）の一連フロー動作確認
-- [ ] `PlayerAvatar.js` - 棒人間アバター実装（頭・手を球、胴体を棒で接続）
-- [ ] `ReplayScreen.js` - リプレイ開始/終了のフェード演出
+- [x] `main.js` でcore/presentationを接続（イベント・データの配線）
+- [ ] PLAYING → CLEAR/GAMEOVER → REPLAY → RESULT → START の一連フロー動作確認（実機確認待ち）
+- [x] `PlayerAvatar.js` - 棒人間アバター実装（頭・手を球、胴体を棒で接続）
+- [x] `ReplayScreen.js` - リプレイ開始/終了のフェード演出
 
 ### Phase 4：調整・仕上げ
 

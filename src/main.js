@@ -1,10 +1,17 @@
-// Phase 1: 環境構築・検証用の最小スケルトン。
-// immersive-ar セッションが開始できるか、頭・コントローラーのトラッキングが
-// 取得できるかを実機（PICO 4 Ultra）で確認するためのものです。
-// Phase 2 以降、core/presentation の実装が main.js を置き換えます。
+// Phase 3: core と presentation を配線する本体。
+// DEVPLAN.md「Phase 2 実装の前提」の接続仕様に沿う：
+//   ctx = { renderer, camera, game, rainPhysics, replayer, controllers }
+//   毎フレームの呼び出し順: core.update() → presentation.update() → renderer.render()
 
 import * as THREE from "three";
 import { ARButton } from "three/addons/webxr/ARButton.js";
+
+import { GameManager } from "./core/GameManager.js";
+import { RainPhysics } from "./core/RainPhysics.js";
+import { PlayerCollider } from "./core/PlayerCollider.js";
+import { Recorder } from "./core/Recorder.js";
+import { Replayer } from "./core/Replayer.js";
+import { createPresentation } from "./presentation/index.js";
 
 const container = document.getElementById("app");
 
@@ -23,66 +30,108 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.xr.enabled = true;
 container.appendChild(renderer.domElement);
 
-// パススルーが効いているか目視確認するための目印キューブ
-const marker = new THREE.Mesh(
-  new THREE.BoxGeometry(0.1, 0.1, 0.1),
-  new THREE.MeshNormalMaterial()
-);
-marker.position.set(0, 1.4, -0.5);
-scene.add(marker);
-
 document.body.appendChild(
   ARButton.createButton(renderer, {
     optionalFeatures: ["local-floor", "hand-tracking"]
   })
 );
 
-// 頭・コントローラーのトラッキング確認用表示（Phase 1のみ・後で削除）
-// dom-overlay がヘッドセット内で効かない機種があるため、視界に追従する
-// 3Dパネル（Canvasテクスチャ）に直接テキストを描画する。
-const controller0 = renderer.xr.getController(0);
-const controller1 = renderer.xr.getController(1);
-scene.add(controller0, controller1);
-
-const hudCanvas = document.createElement("canvas");
-hudCanvas.width = 512;
-hudCanvas.height = 256;
-const hudCtx = hudCanvas.getContext("2d");
-const hudTexture = new THREE.CanvasTexture(hudCanvas);
-const hudPanel = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.3, 0.15),
-  new THREE.MeshBasicMaterial({ map: hudTexture, transparent: true, depthTest: false })
-);
-hudPanel.position.set(-0.12, 0.08, -0.4); // 視界左上あたりに固定
-hudPanel.renderOrder = 999;
-camera.add(hudPanel);
-scene.add(camera);
-
-function fmt(v) {
-  return `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`;
+// --- コントローラー（左右判定つき） ---
+function setupController(index) {
+  const controller = renderer.xr.getController(index);
+  controller.userData.connected = false;
+  controller.userData.handedness = null;
+  controller.addEventListener("connected", (event) => {
+    controller.userData.connected = true;
+    controller.userData.handedness = event.data?.handedness ?? null;
+  });
+  controller.addEventListener("disconnected", () => {
+    controller.userData.connected = false;
+    controller.userData.handedness = null;
+  });
+  scene.add(controller);
+  return controller;
 }
 
-function updateHud(text) {
-  hudCtx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
-  hudCtx.fillStyle = "rgba(0, 0, 0, 0.55)";
-  hudCtx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
-  hudCtx.fillStyle = "#00ff88";
-  hudCtx.font = "26px monospace";
-  text.split("\n").forEach((line, i) => hudCtx.fillText(line, 12, 36 + i * 32));
-  hudTexture.needsUpdate = true;
+const controllers = [setupController(0), setupController(1)];
+
+function controllerByHandedness(hand) {
+  return controllers.find((c) => c.userData.handedness === hand) ?? null;
 }
 
-renderer.setAnimationLoop((time, frame) => {
-  marker.rotation.y += 0.01;
+function poseFromController(controller) {
+  if (!controller?.userData.connected) return null;
+  return poseFromObject3D(controller);
+}
 
-  if (frame) {
-    updateHud(
-      `head        ${fmt(camera.position)}\n` +
-        `controller0 ${fmt(controller0.position)}\n` +
-        `controller1 ${fmt(controller1.position)}`
-    );
+function poseFromObject3D(obj) {
+  return {
+    x: obj.position.x,
+    y: obj.position.y,
+    z: obj.position.z,
+    qx: obj.quaternion.x,
+    qy: obj.quaternion.y,
+    qz: obj.quaternion.z,
+    qw: obj.quaternion.w
+  };
+}
+
+// --- core ---
+const game = new GameManager();
+const rainPhysics = new RainPhysics();
+const playerCollider = new PlayerCollider();
+const recorder = new Recorder();
+
+const ctx = {
+  renderer,
+  camera,
+  game,
+  rainPhysics,
+  replayer: null,
+  controllers
+};
+
+game.on("stateChange", (state) => {
+  if (state === "PLAYING") {
+    rainPhysics.reset();
+    recorder.start();
+  } else if (state === "CLEAR" || state === "GAMEOVER") {
+    recorder.stop();
+  } else if (state === "REPLAY") {
+    ctx.replayer = new Replayer(recorder.getFrames(), game);
+  }
+});
+
+// --- presentation ---
+const presentation = createPresentation(scene, ctx);
+
+// --- メインループ ---
+let lastTime = null;
+
+renderer.setAnimationLoop((time) => {
+  const now = time / 1000; // ms -> s
+  const dt = lastTime === null ? 0 : Math.min(0.1, now - lastTime);
+  lastTime = now;
+
+  if (game.state === "PLAYING") {
+    rainPhysics.update(dt);
+    game.update(dt);
+
+    if (game.state === "PLAYING") {
+      const head = poseFromObject3D(camera);
+      const handLeft = poseFromController(controllerByHandedness("left"));
+      const handRight = poseFromController(controllerByHandedness("right"));
+
+      const hits = playerCollider.findHits(head, handLeft, handRight, rainPhysics.positions);
+      for (const hit of hits) game.registerHit(hit);
+
+      recorder.record(dt, head, handLeft, handRight, rainPhysics.positions, hits, game.lives);
+    }
+  } else if (game.state === "REPLAY") {
+    ctx.replayer?.update(dt);
   }
 
+  presentation.update(dt);
   renderer.render(scene, camera);
 });
 
