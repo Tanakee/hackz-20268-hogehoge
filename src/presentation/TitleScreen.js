@@ -26,9 +26,10 @@ const CFG = {
   TITLE: "雨避け",
   SUBTITLE: "よけていた、つもりだった。",
 
-  DEEP: 0x3f7fbf, // 液体の濃い所
-  BRIGHT: 0xeaf6ff, // ハイライト
-  RIM: 0xffffff, // 縁・波紋の先端
+  DEEP: 0x2c6aa8, // 液体の地の色（読みやすい中間の青）
+  BRIGHT: 0xdcefff, // 上縁のハイライト
+  RIM: 0xffffff, // 波紋・書き先端
+  SHADOW: 0x05101c, // 文字の後ろの暗い縁（明るい部屋でも読めるように）
   RAIN_COLOR: 0xbcd6ff, // 宙吊り・降雨の粒
   WAKE_COLOR: 0xffffff, // 払われた粒の発光
 
@@ -46,16 +47,19 @@ const CFG = {
   TITLE_Y: 0.3, // タイトル中心の高さ（目線相対, m）
   TITLE_W: 1.55,
   TITLE_H: 0.46,
-  SUB_Y: -0.36, // 副題中心（タイトル中心からの相対, m）
-  SUB_W: 1.5,
-  SUB_H: 0.15,
+  SUB_Y: -0.4, // 副題中心（タイトル中心からの相対, m）
+  SUB_W: 1.44,
+  SUB_H: 0.18,
   WRAP_GAIN: 1.0, // 面の湾曲（1で自然、0で平面）
 
-  // 液体シェーダの効き（マシマシ用ノブ）
-  LIQ_WOBBLE: 1.0, // うねりの強さ
-  LIQ_RIM: 1.0, // 縁の光の強さ
-  LIQ_CAUSTIC: 1.0, // 内側の動く明るいムラ
-  RIPPLE_STRENGTH: 1.0, // 着弾波紋の強さ
+  // 液体シェーダの効き（読みやすさ優先で控えめが既定。上げると“濡れ”が強くなる）
+  LIQ_WOBBLE: 0.6, // 面のうねり（形は保つ）
+  LIQ_RIM: 0.8, // 上縁の光
+  LIQ_CAUSTIC: 0.4, // 内側の弱いムラ
+  RIPPLE_STRENGTH: 0.6, // 着弾波紋
+  STROKE_K: 0.03, // グリフを太らせる量（fontPx比）。0で素の字。細ひらがな対策で少しだけ
+  TEXT_SHADOW: true, // 文字の後ろに暗いコピーを敷いて可読性を上げる
+  BODY_ALPHA: 0.82, // 液体の地の不透明度（下げると透ける）
 
   DRIPS: 12, // しずくの数（タイトル＋副題合計）
   DRIP_FALL: 0.12, // しずくの落下距離(m)
@@ -85,7 +89,7 @@ const LIQUID_FRAG = /* glsl */ `
   precision highp float;
   varying vec2 vUv;
   uniform sampler2D uGlyph;
-  uniform float uTime, uFill, uOpacity, uWobble, uRimK, uCaustic, uRippleK;
+  uniform float uTime, uFill, uOpacity, uWobble, uRimK, uCaustic, uRippleK, uBodyA;
   uniform vec3 uDeep, uBright, uRim;
   uniform vec3 uImpacts[${N_IMPACT}];
 
@@ -97,45 +101,51 @@ const LIQUID_FRAG = /* glsl */ `
     vec2 uv = vUv;
     float t = uTime;
 
+    // ごく弱いうねり（字の形は保つ）
     vec2 warp = vec2(
-      sin(uv.y*22.0 + t*1.7) + 0.6*sin(uv.x*13.0 - t*1.1),
-      sin(uv.x*18.0 - t*1.3) + 0.6*sin(uv.y*15.0 + t*0.9)
-    ) * 0.006 * uWobble;
+      sin(uv.y*18.0 + t*1.4) + 0.5*sin(uv.x*11.0 - t*0.9),
+      sin(uv.x*15.0 - t*1.1) + 0.5*sin(uv.y*13.0 + t*0.7)
+    ) * 0.0016 * uWobble;
 
+    // 着弾波紋（弱め）
     float ripple = 0.0;
     for (int i = 0; i < ${N_IMPACT}; i++) {
       vec3 im = uImpacts[i];
       if (im.z < 0.0) continue;
       float age = t - im.z;
-      if (age < 0.0 || age > 1.7) continue;
+      if (age < 0.0 || age > 1.4) continue;
       float d = distance(uv, im.xy);
-      ripple += sin(d*90.0 - age*26.0) * exp(-age*3.0) * exp(-d*10.0);
+      ripple += sin(d*70.0 - age*22.0) * exp(-age*3.5) * exp(-d*12.0);
     }
-    warp += ripple * 0.012 * uRippleK;
+    vec2 wuv = uv + warp + vec2(0.0, ripple * 0.004 * uRippleK);
 
-    float a = gA(uv + warp);
-
-    // 左→右の書き進み。先端に明るい水線。
-    float wipe = smoothstep(uFill, uFill - 0.06, uv.x);
-    float front = exp(-pow((uv.x - uFill) / 0.022, 2.0)) * step(0.5, gA(vec2(clamp(uFill,0.0,1.0), uv.y)) + a);
+    float a = gA(wuv);
+    float wipe = smoothstep(uFill + 0.02, uFill - 0.05, uv.x);
     a *= wipe;
-    if (a < 0.02 && front < 0.02) discard;
 
-    // 縁（メニスカス）
-    float inA = gA(uv + warp + vec2(0.012, 0.0)) * gA(uv + warp - vec2(0.012, 0.0));
-    float rim = clamp((a - inA) * 5.0, 0.0, 1.0);
-    rim += smoothstep(0.55, 0.12, a) * step(0.06, a) * 0.7;
-    rim *= uRimK;
+    // 上下の縁（上＝光、下＝陰）だけを細く
+    float up = gA(wuv + vec2(0.0, 0.009));
+    float dn = gA(wuv - vec2(0.0, 0.009));
+    float inGlyph = step(0.25, a);
+    float topRim = clamp((dn - up) * 2.4, 0.0, 1.0) * inGlyph;
+    float botRim = clamp((up - dn) * 2.4, 0.0, 1.0) * inGlyph;
 
-    // 内側で動くコースティック
-    float caus = (0.5 + 0.5*sin(uv.x*9.0 + t*1.5 + sin(uv.y*7.0 - t)))
-               * (0.5 + 0.5*sin(uv.y*11.0 - t*1.2));
+    // 弱いコースティック
+    float caus = sin(uv.x*7.0 + t*1.1 + sin(uv.y*5.0 - t*0.6));
 
-    vec3 col = mix(uDeep, uBright, clamp(caus*0.6*uCaustic + ripple*2.2*uRippleK, 0.0, 1.0));
-    col += rim * uRim;
-    col += front * uRim * 1.6;
+    vec3 col = mix(uDeep, uDeep * 1.28, uv.y);        // 上ほど少し明るい
+    col += caus * 0.05 * uCaustic;
+    col += topRim * uBright * (0.85 * uRimK);
+    col = max(col - botRim * 0.22, 0.0);
+    col += ripple * 0.10 * uRippleK;
 
-    float alpha = (a * (0.55 + 0.45*rim) + front*0.55) * uOpacity;
+    // 書き先端の細い水線
+    float front = exp(-pow((uv.x - uFill) / 0.016, 2.0))
+                * step(0.08, gA(vec2(clamp(uFill, 0.001, 0.999), uv.y)));
+    col += front * uBright * 0.7;
+
+    float alpha = (a * uBodyA + front * 0.45) * uOpacity;
+    if (alpha < 0.02) discard;
     gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
   }
 `;
@@ -192,9 +202,16 @@ export class TitleScreen {
       };
     }
 
-    // 液体の水膜（本物のグリフ形＋液体シェーダ）
-    this._title = this._makeSurface(CFG.TITLE, 132, CFG.TITLE_W, CFG.TITLE_H, CFG.TITLE_Y);
-    this._sub = this._makeSurface(CFG.SUBTITLE, 60, CFG.SUB_W, CFG.SUB_H, CFG.TITLE_Y + CFG.SUB_Y);
+    // タイトル = 液体マシマシ。副題 = 小さい細ひらがなが潰れないよう“ほぼ素の水”で（読み優先）。
+    this._title = this._makeSurface(CFG.TITLE, 132, CFG.TITLE_W, CFG.TITLE_H, CFG.TITLE_Y, {});
+    this._sub = this._makeSurface(CFG.SUBTITLE, 66, CFG.SUB_W, CFG.SUB_H, CFG.TITLE_Y + CFG.SUB_Y, {
+      wobble: 0.14,
+      rim: 0.35,
+      caustic: 0.08,
+      bodyA: 0.95,
+      strokeK: 0.085,
+      shadowScale: [1.03, 1.14, 1.03]
+    });
     this.world.add(this._title.mesh, this._sub.mesh);
 
     // しずく
@@ -268,7 +285,8 @@ export class TitleScreen {
     this._impactHead = { t: 0, s: 0 };
   }
 
-  _makeSurface(text, fontPx, worldW, worldH, yOffset) {
+  _makeSurface(text, fontPx, worldW, worldH, yOffset, opts = {}) {
+    const strokeK = opts.strokeK ?? CFG.STROKE_K;
     // グリフをキャンバスに（細い画は stroke で太らせる）
     const W = 1024;
     const H = Math.max(160, Math.round((worldH / worldW) * W));
@@ -280,11 +298,13 @@ export class TitleScreen {
     g.fillStyle = "#fff";
     g.strokeStyle = "#fff";
     g.lineJoin = "round";
-    g.lineWidth = fontPx * 0.16;
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.font = `800 ${fontPx}px system-ui, sans-serif`;
-    g.strokeText(text, W / 2, H / 2);
+    if (strokeK > 0) {
+      g.lineWidth = fontPx * strokeK;
+      g.strokeText(text, W / 2, H / 2);
+    }
     g.fillText(text, W / 2, H / 2);
 
     const tex = new THREE.CanvasTexture(cv);
@@ -319,10 +339,11 @@ export class TitleScreen {
         uTime: { value: 0 },
         uFill: { value: 0 },
         uOpacity: { value: 0 },
-        uWobble: { value: CFG.LIQ_WOBBLE },
-        uRimK: { value: CFG.LIQ_RIM },
-        uCaustic: { value: CFG.LIQ_CAUSTIC },
-        uRippleK: { value: CFG.RIPPLE_STRENGTH },
+        uWobble: { value: opts.wobble ?? CFG.LIQ_WOBBLE },
+        uRimK: { value: opts.rim ?? CFG.LIQ_RIM },
+        uCaustic: { value: opts.caustic ?? CFG.LIQ_CAUSTIC },
+        uRippleK: { value: opts.ripple ?? CFG.RIPPLE_STRENGTH },
+        uBodyA: { value: opts.bodyA ?? CFG.BODY_ALPHA },
         uDeep: { value: new THREE.Color(CFG.DEEP) },
         uBright: { value: new THREE.Color(CFG.BRIGHT) },
         uRim: { value: new THREE.Color(CFG.RIM) },
@@ -332,6 +353,28 @@ export class TitleScreen {
     const mesh = new THREE.Mesh(pg, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 3;
+
+    // 文字の後ろの暗いコピー（明るい部屋でも輪郭が読めるように）
+    let shadow = null;
+    if (CFG.TEXT_SHADOW) {
+      shadow = new THREE.Mesh(
+        pg,
+        new THREE.MeshBasicMaterial({
+          map: tex,
+          color: new THREE.Color(CFG.SHADOW),
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      const ss = opts.shadowScale ?? [1.045, 1.09, 1.045];
+      shadow.scale.set(ss[0], ss[1], ss[2]);
+      shadow.frustumCulled = false;
+      shadow.renderOrder = 2.6; // 液体(3)より先＝後ろ
+      mesh.add(shadow);
+    }
 
     // グリフのアルファからサンプル点（フィーダー目標）と下端点（しずく）を作る
     const data = g.getImageData(0, 0, W, H).data;
@@ -365,6 +408,7 @@ export class TitleScreen {
     return {
       mesh,
       mat,
+      shadow,
       tex,
       cv,
       W, H, minX, minY, bw, bh,
@@ -740,6 +784,10 @@ export class TitleScreen {
       s.fillNow = THREE.MathUtils.damp(s.fillNow, s.fillTarget, 6, dt);
       s.mat.uniforms.uFill.value = s.fillNow;
       s.mat.uniforms.uTime.value = this._t;
+      if (s.shadow) {
+        const o = s.mat.uniforms.uOpacity.value;
+        s.shadow.material.opacity = 0.5 * o * THREE.MathUtils.clamp((s.fillNow - 0.03) / 0.15, 0, 1);
+      }
     }
   }
 
@@ -852,6 +900,7 @@ export class TitleScreen {
       s.mesh.geometry.dispose();
       s.mat.dispose();
       s.tex.dispose();
+      if (s.shadow) s.shadow.material.dispose();
     }
     if (this._dripMesh) {
       this._dripMesh.geometry.dispose();
