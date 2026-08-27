@@ -29,7 +29,11 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMR（複合現実）ゲーム�
 ### 3.1 状態遷移
 
 ```
-START → READY → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START（再挑戦）
+                                                    ┌────────┐
+                                                    ▼        │
+START → READY → PLAYING → (CLEAR または GAMEOVER) → RESULT → REPLAY
+                                                    │
+                                                    └→ START（再挑戦）
 ```
 
 | 状態 | 内容 |
@@ -39,18 +43,18 @@ START → READY → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT
 | PLAYING | 雨が降り、避け続ける。制限時間 or ライフ切れで終了 |
 | CLEAR | 制限時間（初期値30秒）を生き残った |
 | GAMEOVER | ライフが0になった |
-| REPLAY | 直前のプレイを記録データから再生 |
-| RESULT | リプレイ後、クリア/ゲームオーバーとスコア（被弾回数・生存時間）を表示する画面。トリガーで START へ |
+| RESULT | クリア/ゲームオーバーとスコア（被弾回数・生存時間）を表示する画面。**右トリガーでリプレイ、左トリガーで終了（スタートへ）** を選べる |
+| REPLAY | 直前のプレイを記録データから再生。終了後は自動でRESULTに戻る（何度でも見返せる） |
 
 - START → READY の遷移は、スタート画面のトリガー操作を検知した presentation 側が `GameManager.start()` を呼んで行う
 - READY → PLAYING の遷移は `READY_DURATION` 秒経過後、core が自動で行う（プレイヤーが身構える時間を確保するため。実機フィードバックにより追加）
-- CLEAR・GAMEOVERどちらも同じ演出でREPLAYに遷移する（演出の差異なし）
-- CLEAR/GAMEOVER → REPLAY の遷移は、演出（ReplayScreen）のフェード＋余韻が終わってから `GameManager.startReplay()` を呼んで行う（尺は演出側の管轄）
+- CLEAR・GAMEOVERどちらも同じ演出でRESULTに遷移する（演出の差異なし）
+- CLEAR/GAMEOVER → RESULT の遷移は、演出（ReplayScreen）のフェード＋余韻が終わってから `GameManager.showResult()` を呼んで行う（尺は演出側の管轄）
+- **リプレイは強制しない**：RESULT画面で結果を確認した上で、見たければ「リプレイ」、見なければ「終了」を選べる（実機フィードバックにより変更。従来はCLEAR/GAMEOVER後に自動でリプレイが流れていた）
+- RESULT → REPLAY の遷移は、「リプレイ」が選ばれたタイミングで presentation 側が `GameManager.startReplay()` を呼んで行う。何度でも選び直せる
 - REPLAY → RESULT の遷移は `Replayer` が再生完了時に自分で `GameManager.finishReplay()` を呼んで行う（core内で完結。presentationは`Replayer.isFinished`/`progress`を読むだけでよい）
-- RESULT → START の遷移は、RESULT画面のトリガー操作を検知した presentation 側が `GameManager.restart()` を呼んで行う
+- RESULT → START の遷移は、「終了」が選ばれたタイミングで presentation 側が `GameManager.restart()` を呼んで行う
 - リプレイ中の一時停止・巻き戻しは**初期実装では行わない**（将来拡張候補）
-
-> **RESULT 状態について**：対応済み。`GameManager` に `RESULT` 状態を追加し、`finishReplay()` は REPLAY→RESULT に遷移するよう変更した。RESULT→START は新設の `restart()` を呼ぶ。
 
 ### 3.2 クリア条件・ライフ
 
@@ -65,10 +69,26 @@ START → READY → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT
 ### 4.1 降り方
 
 - 降る位置・タイミングは**ランダム**（固定パターンなし）
-- 基本の降下方向は**真上から垂直**
-- 斜め方向の雨は**難易度パラメータとして将来追加**（初期実装では真上のみでOK）
+- **降下方向は垂直モードと斜めモードを交互に切り替える**（`RAIN_MODE_DURATION` 秒ごと、初期値10秒）
+  - 垂直と斜めを同時に混在させるのは非現実的なため、「風向き」ごと一括で切り替える方式にした
+  - 斜めモードでは、鉛直から `RAIN_TILT_ANGLE_DEG`（初期値30度）傾いた方向にランダムな水平方位で降る。
+    切り替わるたびに方位を選び直す
+  - **切り替えはパキッと瞬間的に起きず、`RAIN_MODE_TRANSITION` 秒（初期値2.5秒）かけて風速がなめらかに
+    変化する**（「風が強まる/収まる」ように見せる）。瞬間切り替えは不自然という実機フィードバックにより追加
+  - 導入理由：垂直の雨だけだと「その場で体を横にずらすだけ」で避けられ、**ほぼ動かずにクリアできてしまう**
+    問題があったため。斜め方向を混ぜることで回避行動のバリエーション（しゃがむ／ステップ／ずらす）を
+    実際に使い分けさせる（実機フィードバックにより追加）
+  - 見た目（雨粒のストリークの向き）も実際の風速に応じて傾ける（風速のなめらかな変化に追従する）。
+    ただしリプレイ中の傾き再現は初期スコープ外（リプレイは常に垂直のストリークで表示する）
 - 同時に存在する雨粒数：`RAIN_COUNT = 60`（初期値150は実機テストで「多すぎ・避けられない」との評価だったため減量。引き続き要調整）
 - 初期の難易度方針：**「よけられる」ことを最優先**。密度・速度は実機テストしながら調整する前提
+- PLAYING開始時、`RAIN_COUNT` 個の雨粒を一気に出現させない。`RAIN_RAMP_UP_DURATION` 秒
+  （初期値2.5秒）かけて少量ずつ高頻度で投入し、上限に達する
+  - 一気に全部出現させると「開始直後から囲まれている」「地面到達→再出現のタイミングが
+    そろって段階的に降ってくる（塊のまま循環する）」という2つの問題が同時に起きていたため。
+    高さの初期分散だけでは解決しなかったため、投入自体を時間分散させる方式に変更した
+    （実機フィードバックにより変更）
+  - 新しく投入される雨粒は常に出現上限の高さ（`RAIN_SPAWN_HEIGHT`）から降り始める
 
 ### 4.2 難易度の可変性
 
@@ -81,7 +101,13 @@ START → READY → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT
 
 - 判定対象：**頭 + 左右コントローラー（手）**（`PlayerCollider.js` にて球コライダー）
   - 頭の半径：`PLAYER_HEAD_RADIUS = 0.15m`
-  - 手の半径：`PLAYER_HAND_RADIUS = 0.15m`（頭と同じ。実機調整前提）
+  - 手の半径：`PLAYER_HAND_RADIUS = 0.05m`（実機フィードバックにより0.15m→0.05mへ縮小。頭より小さい）
+  - 雨粒側の半径：`RAIN_DROP_RADIUS`。見た目のストリーク半径と共有定数化しており、
+    「見た目より判定が大きくて理不尽」にならないようにしている（実機フィードバックにより追加）
+- **当たり判定の可視化**：PLAYING中、頭・両手に判定半径と同じ大きさの控えめな半透明球を表示する
+  （`ColliderIndicator.js`）。プレイヤーが「どこまでよければ避けられるか」を体感できるようにするため
+- **被弾した雨粒は即座に再出現させる**：バグ修正。放置すると同じ雨粒に何フレームも重なり続け、
+  1回のニアミスで複数回被弾判定される（ライフが一瞬で0になる）多段ヒットが発生していたため
 - 傘・防御アイテムなどのインタラクションは**初期実装では実装しない**
 - 回避手段：**移動**（ルームスケールでのしゃがみ・ステップ・体をずらす動作）が基本
 
@@ -92,6 +118,7 @@ START → READY → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT
 3. **コントローラー振動**（WebXR Haptic Actuator）… どの部位に当たっても**左右両方**のコントローラーを鳴らす
 
 - `hit` イベントの payload = `{ rainIndex, part, livesRemaining }`（`part` は `'head' | 'handLeft' | 'handRight'`。被弾のワールド座標は含まない）
+- **REPLAY中も同じ被弾演出（フラッシュ・SE・振動）を再生する**：記録された `hits` から復元する。プレイ中は一瞬で見逃しやすいため、リプレイで「どこで被弾してGAMEOVERになったか」を振り返れるようにする（実機フィードバックにより追加）
 
 ---
 
@@ -188,8 +215,13 @@ export const RAIN_COUNT = 60;           // 同時に存在する雨粒数（実�
 export const RAIN_SPAWN_RADIUS = 1.5;   // m（雨の出現半径・xz平面／プレイヤー中心。実機調整で1.2→1.5）
 export const RAIN_SPAWN_HEIGHT = 3.0;   // m（雨の出現上限の高さ。実機調整で2.2→3.0）
 export const RAIN_GROUND_Y = 0;         // m（この高さで再出現）
+export const RAIN_RAMP_UP_DURATION = 2.5; // 秒（PLAYING開始時、この時間をかけて雨粒を上限まで少しずつ投入）
+export const RAIN_MODE_DURATION = 10;   // 秒（垂直/斜めモードを切り替えるサイクル）
+export const RAIN_MODE_TRANSITION = 2.5; // 秒（切り替え時、風速がなめらかに変化する時間）
+export const RAIN_TILT_ANGLE_DEG = 30;  // 度（斜めモード時、鉛直から何度傾くか）
 export const PLAYER_HEAD_RADIUS = 0.15; // m
-export const PLAYER_HAND_RADIUS = 0.15; // m（実機調整前提）
+export const PLAYER_HAND_RADIUS = 0.05; // m（実機調整で0.15→0.05）
+export const RAIN_DROP_RADIUS = 0.0045; // m（雨粒の当たり判定半径。見た目のストリーク半径と一致させた）
 export const GAME_DURATION = 30;        // 秒
 export const PLAYER_LIVES = 3;          // 被弾許容回数
 export const READY_DURATION = 3;        // 秒（START後の準備カウントダウン）
