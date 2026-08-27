@@ -1,6 +1,4 @@
-import { PLAYER_HEAD_RADIUS, PLAYER_HAND_RADIUS } from "../utils/constants.js";
-
-const RAIN_DROP_RADIUS = 0.03; // m（雨粒自体の当たり半径・見た目より少し小さめ）
+import { PLAYER_HEAD_RADIUS, PLAYER_HAND_RADIUS, RAIN_DROP_RADIUS } from "../utils/constants.js";
 
 function distanceSq(ax, ay, az, bx, by, bz) {
   const dx = ax - bx;

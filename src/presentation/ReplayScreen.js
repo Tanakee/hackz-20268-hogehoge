@@ -14,10 +14,11 @@ const SCRIM_MAX = REDUCED_MOTION ? 0.3 : 0.55;
 
 /**
  * リプレイ前後のトランジション演出。
- *  - clear / gameover を受けたら暗転＋見出し（CLEAR / GAME OVER）→ 余韻 → game.startReplay()
- *  - リプレイが始まったら明転
- *  - リプレイが終わったら軽い明滅
- * ※ 遷移の「尺」は演出側の管轄。core は自動で REPLAY に進まない（DEVPLAN 接続ルール）。
+ *  - clear / gameover を受けたら暗転＋見出し（CLEAR / GAME OVER）→ 余韻 → game.showResult()
+ *    でRESULT画面（結果＋「リプレイ」「終了」の選択肢）へ
+ *  - RESULT画面で「リプレイ」が選ばれ、リプレイが始まったら明転
+ *  - リプレイが終わったら（RESULTに戻ったら）軽い明滅
+ * ※ 遷移の「尺」は演出側の管轄。core は自動で先に進まない（DEVPLAN 接続ルール）。
  */
 export class ReplayScreen {
   constructor(scene, ctx) {
@@ -79,6 +80,10 @@ export class ReplayScreen {
     this._phase = "exit";
     this._t = 0;
     this.scrim.visible = true;
+    // enterフェーズ（見出しパネルのフェードアウト）が完了する前にリプレイが
+    // 終わってしまうケース（記録が短い＝早期GAMEOVER等）があるため、ここで
+    // 確実に隠す。隠さないとStartScreenのRESULT画面と文字が二重に見えてしまう。
+    this.panel.mesh.visible = false;
   }
 
   _drawTitle(outcome) {
@@ -100,9 +105,9 @@ export class ReplayScreen {
       this.scrim.material.opacity = SCRIM_MAX * fadeK;
       this.panel.mesh.material.opacity = fadeK;
       if (this._t >= FADE_IN + HOLD) {
-        // 余韻おわり → core にリプレイ開始を依頼して明転へ
+        // 余韻おわり → core に結果画面表示を依頼して明転へ
         if (this.game.state === "CLEAR" || this.game.state === "GAMEOVER") {
-          this.game.startReplay();
+          this.game.showResult();
         }
         this._phase = "enter";
         this._t = 0;

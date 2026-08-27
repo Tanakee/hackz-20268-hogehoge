@@ -9,6 +9,8 @@ const RAIN_VOLUME = 0.5;
  * 音声ファイルが未配置でもクラッシュしない（警告のみ）。
  * AudioContext はブラウザ仕様上ユーザー操作まで鳴らせないため、
  * コントローラーの selectstart で resume する。
+ * REPLAY中は Replayer.frame.hits を見て、記録された被弾のタイミングでも
+ * 被弾SEを鳴らす（GAMEOVERの原因をリプレイで振り返れるようにするため）。
  */
 export class SoundManager {
   constructor(scene, ctx) {
@@ -20,6 +22,7 @@ export class SoundManager {
     this.rain = null;
     this._rainTarget = 0;
     this._rainGain = 0;
+    this._lastReplayHitGameTime = null;
 
     const loader = new THREE.AudioLoader();
     for (const name of ["rain", "hit", "clear"]) {
@@ -45,6 +48,7 @@ export class SoundManager {
       ctx.game.on("clear", () => this._oneShot("clear", 0.9)),
       ctx.game.on("stateChange", (state) => {
         this._rainTarget = state === "PLAYING" || state === "REPLAY" ? RAIN_VOLUME : 0;
+        if (state === "REPLAY") this._lastReplayHitGameTime = null;
       })
     ];
   }
@@ -70,7 +74,15 @@ export class SoundManager {
     source.start();
   }
 
-  update(dt) {
+  update(dt, ctx) {
+    if (ctx?.game?.state === "REPLAY") {
+      const frame = ctx.replayer?.frame;
+      if (frame?.hits?.length && frame.gameTime !== this._lastReplayHitGameTime) {
+        this._lastReplayHitGameTime = frame.gameTime;
+        this._oneShot("hit", 0.9);
+      }
+    }
+
     this._rainGain += (this._rainTarget - this._rainGain) * Math.min(1, dt * 2);
     if (this.rain) this.rain.setVolume(this._rainGain);
   }

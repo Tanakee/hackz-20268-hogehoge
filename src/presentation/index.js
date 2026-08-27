@@ -5,6 +5,7 @@ import { HUD } from "./HUD.js";
 import { StartScreen } from "./StartScreen.js";
 import { ReplayScreen } from "./ReplayScreen.js";
 import { SoundManager } from "./SoundManager.js";
+import { ColliderIndicator } from "./ColliderIndicator.js";
 
 /**
  * presentation 一式をまとめて生成する。Phase 3 の main.js から1回だけ呼ぶ想定。
@@ -21,7 +22,8 @@ export function createPresentation(scene, ctx) {
     new HUD(scene, ctx),
     new StartScreen(scene, ctx),
     new ReplayScreen(scene, ctx),
-    new SoundManager(scene, ctx)
+    new SoundManager(scene, ctx),
+    new ColliderIndicator(scene, ctx)
   ];
 
   return {

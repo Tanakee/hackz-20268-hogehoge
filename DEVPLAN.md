@@ -112,10 +112,12 @@ GameManager.on('stateChange', state) → HUD・StartScreen・ReplayScreen がリ
   `lives` / `timeRemaining` は公開プロパティ（HUD は毎フレーム読んでよい）
 - `hit` payload = `{ rainIndex, part: 'head' | 'handLeft' | 'handRight', livesRemaining }`
   （被弾のワールド座標は含まない）
-- CLEAR/GAMEOVER → REPLAY は **core が自動遷移しない**。演出（ReplayScreen）が
-  フェード＋余韻を終えたタイミングで `game.startReplay()` を呼ぶ。尺は ReplayScreen が持つ
-- REPLAY → RESULT は `Replayer` が再生完了時に `game.finishReplay()` を呼ぶ（core 内で完結）。
-  RESULT → START は、RESULT画面のトリガー操作を検知した presentation 側が `game.restart()` を呼ぶ
+- CLEAR/GAMEOVER → RESULT は **core が自動遷移しない**。演出（ReplayScreen）が
+  フェード＋余韻を終えたタイミングで `game.showResult()` を呼ぶ。尺は ReplayScreen が持つ
+- RESULT画面では**リプレイを強制しない**。右トリガーで「リプレイ」（`game.startReplay()`。
+  RESULT→REPLAY、何度でも選び直せる）、左トリガーで「終了」（`game.restart()`。RESULT→START）
+  を選べる。左右の判定は `controller.userData.handedness`（main.jsがconnectedイベントで設定）を見る
+- REPLAY → RESULT は `Replayer` が再生完了時に `game.finishReplay()` を呼ぶ（core 内で完結）
 - リプレイのコマ間補間は **core（Replayer）側で行う**。presentation は `replayer.frame` を
   そのまま描くだけ。`replayer.progress`（0〜1）を HUD が参照する
 - スタート操作：StartScreen が `ctx.controllers` の `selectstart` を検知して `game.start()` を呼ぶ
@@ -158,25 +160,25 @@ main
 ### Phase 2：MVP実装（並行開発）
 
 **ゲーム処理担当**
-- [ ] `RainPhysics.js` - 雨粒の位置配列を毎フレーム更新（`positions: Float32Array`）
-- [ ] `PlayerCollider.js` - 頭・手の球コライダー（各0.15m）、雨粒との距離判定
-- [ ] `GameManager.js` - 状態遷移・ライフ管理（3回被弾でGAMEOVER）・タイマー（30秒）・REPLAY終了後の自動START遷移
-- [ ] `Recorder.js` - フレームごとに頭・手・雨粒位置・被弾イベントをバッファに記録
-- [ ] `Replayer.js` - 記録データを `REPLAY_MULTIPLIER` 倍速で再生するイテレーター
+- [x] `RainPhysics.js` - 雨粒の位置配列を毎フレーム更新（`positions: Float32Array`）
+- [x] `PlayerCollider.js` - 頭・手の球コライダー（各0.15m）、雨粒との距離判定
+- [x] `GameManager.js` - 状態遷移・ライフ管理（3回被弾でGAMEOVER）・タイマー（30秒）・RESULT状態を含む状態遷移
+- [x] `Recorder.js` - フレームごとに頭・手・雨粒位置・被弾イベント・残りライフをバッファに記録
+- [x] `Replayer.js` - 記録データを `REPLAY_MULTIPLIER` 倍速で再生するイテレーター（コマ間補間・progress付き）
 
 **演出担当**
-- [ ] `RainRenderer.js` - InstancedMeshで雨粒を描画（位置はPhysicsから受け取るだけ）
-- [ ] `HitEffect.js` - 被弾演出（画面フラッシュ赤点灯 + コントローラー振動）
-- [ ] `HUD.js` - 視界追従UI（ハートアイコン3つ・タイマー）
-- [ ] `StartScreen.js` - VR内スタート画面（トリガーボタンで開始）
-- [ ] `SoundManager.js` - 被弾音・クリア音・雨音ループ（フリー素材）
+- [x] `RainRenderer.js` - InstancedMeshで雨粒を描画（位置はPhysicsから受け取るだけ）
+- [x] `HitEffect.js` - 被弾演出（画面フラッシュ赤点灯 + コントローラー振動）
+- [x] `HUD.js` - 視界追従UI（ハートアイコン3つ・タイマー・リプレイ中の進行バー）
+- [x] `StartScreen.js` - VR内スタート画面（トリガーボタンで開始）＋ RESULT画面兼用
+- [x] `SoundManager.js` - 被弾音・クリア音・雨音ループ（フリー素材）
 
 ### Phase 3：統合（Phase 2完了後）
 
-- [ ] `main.js` でcore/presentationを接続（イベント・データの配線）
-- [ ] PLAYING → CLEAR/GAMEOVER → REPLAY → START（自動）の一連フロー動作確認
-- [ ] `PlayerAvatar.js` - 棒人間アバター実装（頭・手を球、胴体を棒で接続）
-- [ ] `ReplayScreen.js` - リプレイ開始/終了のフェード演出
+- [x] `main.js` でcore/presentationを接続（イベント・データの配線）
+- [ ] PLAYING → CLEAR/GAMEOVER → REPLAY → RESULT → START の一連フロー動作確認（実機確認待ち）
+- [x] `PlayerAvatar.js` - 棒人間アバター実装（頭・手を球、胴体を棒で接続）
+- [x] `ReplayScreen.js` - リプレイ開始/終了のフェード演出
 
 ### Phase 4：調整・仕上げ
 
@@ -199,14 +201,23 @@ main
 ## 共有定数（constants.js）
 
 ```js
-export const RAIN_SPEED_SLOW = 1.5;     // m/s（ゲーム中の見かけの雨速）
+export const RAIN_SPEED_SLOW = 1.1;     // m/s（ゲーム中の見かけの雨速。実機調整で1.5→1.1）
 export const RAIN_SPEED_REAL = 7.0;     // m/s（現実の雨速・リプレイ後の速度）
-export const REPLAY_MULTIPLIER = RAIN_SPEED_REAL / RAIN_SPEED_SLOW; // ≒ 4.67倍
-export const RAIN_COUNT = 150;          // 同時に存在する雨粒数（難易度調整の主要パラメータ）
+export const REPLAY_MULTIPLIER = RAIN_SPEED_REAL / RAIN_SPEED_SLOW; // ≒ 6.36倍
+export const RAIN_COUNT = 60;           // 同時に存在する雨粒数（難易度調整の主要パラメータ。実機調整で150→60）
+export const RAIN_SPAWN_RADIUS = 1.5;   // m（xz平面の出現半径。実機調整で1.2→1.5）
+export const RAIN_SPAWN_HEIGHT = 3.0;   // m（雨の出現上限の高さ。実機調整で2.2→3.0）
+export const RAIN_GROUND_Y = 0;         // m（この高さまで落ちたら再出現）
+export const RAIN_RAMP_UP_DURATION = 2.5; // 秒（PLAYING開始時、この時間をかけて雨粒を上限まで少しずつ投入）
+export const RAIN_MODE_DURATION = 10;   // 秒（垂直/斜めモードを切り替えるサイクル）
+export const RAIN_MODE_TRANSITION = 2.5; // 秒（切り替え時、風速がなめらかに変化する時間）
+export const RAIN_TILT_ANGLE_DEG = 30;  // 度（斜めモード時、鉛直から何度傾くか）
 export const PLAYER_HEAD_RADIUS = 0.15; // m
-export const PLAYER_HAND_RADIUS = 0.15; // m（実機調整前提）
+export const PLAYER_HAND_RADIUS = 0.05; // m（実機調整で0.15→0.05）
+export const RAIN_DROP_RADIUS = 0.0045; // m（雨粒の当たり判定半径。見た目のストリーク半径と一致させた）
 export const GAME_DURATION = 30;        // 秒
 export const PLAYER_LIVES = 3;          // 被弾許容回数
+export const READY_DURATION = 3;        // 秒（START後の準備カウントダウン）
 ```
 
 ---
