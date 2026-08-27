@@ -36,6 +36,11 @@ export class PlayerAvatar {
     this._scannedReplayer = null;
     this._scaleFactor = 1;
     this._modelEyeH = CFG.FALLBACK_STATURE * CFG.EYE_TO_STATURE;
+    this._standEyeH = CFG.FALLBACK_STATURE * CFG.EYE_TO_STATURE; // プレイヤーの立ち目線高
+    this._kneeBend = 0; // フィードバックで決まる膝角の目標（rad）
+    this._kneeApplied = 0; // 実際に適用中の膝角（平滑化後）
+    this._echoShader = null; // 脚フェード用の uniform 更新に使う
+    this._shinTip = { L: null, R: null }; // すねの先（接地判定用）
 
     // 腕の寸法・レスト軸（読み込み時に実測）
     this._arm = {
@@ -75,6 +80,8 @@ export class PlayerAvatar {
     this._up = new THREE.Vector3(0, 1, 0);
     this._qFix = new THREE.Quaternion();
     this._eFix = new THREE.Euler();
+    this._qDelta = new THREE.Quaternion();
+    this._xAxis = new THREE.Vector3(1, 0, 0);
 
     if (!CFG.ENABLED) return;
 
@@ -109,6 +116,34 @@ export class PlayerAvatar {
       side: THREE.DoubleSide
     });
     this._echoMat = echoMat;
+
+    // 下半身フェード: フラグメントのワールドYが足元付近ほど不透明度を下げる。
+    // uFeetY は毎フレーム update() で足元のワールドYに更新する。
+    if (CFG.LEG_FADE) {
+      echoMat.onBeforeCompile = (shader) => {
+        shader.uniforms.uFeetY = { value: 0 };
+        shader.uniforms.uFadeTop = { value: CFG.LEG_FADE_TOP };
+        shader.uniforms.uFadeBottom = { value: CFG.LEG_FADE_BOTTOM };
+        shader.uniforms.uFadeMin = { value: CFG.LEG_FADE_MIN };
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nvarying vec3 vEchoWPos;")
+          .replace(
+            "#include <fog_vertex>",
+            "#include <fog_vertex>\nvEchoWPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;"
+          );
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            "#include <common>",
+            "#include <common>\nvarying vec3 vEchoWPos;\nuniform float uFeetY;\nuniform float uFadeTop;\nuniform float uFadeBottom;\nuniform float uFadeMin;"
+          )
+          .replace(
+            "#include <dithering_fragment>",
+            "#include <dithering_fragment>\nfloat legT = smoothstep( uFeetY + uFadeBottom, uFeetY + uFadeTop, vEchoWPos.y );\ngl_FragColor.a *= mix( uFadeMin, 1.0, legT );"
+          );
+        this._echoShader = shader;
+      };
+      echoMat.customProgramCacheKey = () => "echoLegFade";
+    }
     this._model.traverse((o) => {
       if (o.isMesh || o.isSkinnedMesh) {
         o.material = echoMat;
@@ -157,6 +192,19 @@ export class PlayerAvatar {
         arm.axisLower.copy(ha.position).normalize();
       }
     }
+
+    // 脚ボーンのレスト(素の)ローカル回転を控える。Idle クリップは脚を動かさないため、
+    // しゃがみ曲げは毎フレーム「レスト回転 × 曲げ」で置き直す（rotateX の累積を避ける）。
+    this._restQ = {};
+    for (const key of ["upperLegL", "lowerLegL", "upperLegR", "lowerLegR", "hips"]) {
+      if (this._bones[key]) this._restQ[key] = this._bones[key].quaternion.clone();
+    }
+
+    // すねの先（接地判定に使う）。脚チェーンの末端。無ければ Foot ボーンで代用。
+    this._shinTip.L =
+      this._findBone("LowerLeg.L_end") || this._findBone("LowerLegL_end") || this._bones.footL;
+    this._shinTip.R =
+      this._findBone("LowerLeg.R_end") || this._findBone("LowerLegR_end") || this._bones.footR;
 
     // 体・脚の待機ポーズ（無ければバインドのまま）
     const clips = gltf.animations || [];
@@ -241,15 +289,20 @@ export class PlayerAvatar {
       );
       const m = this._modelEyeH;
       this._scaleFactor = m > 0.01 && Number.isFinite(m) ? wantEyeH / m : 1;
+      this._standEyeH = wantEyeH;
       this.group.scale.setScalar(this._scaleFactor);
       if (this._mixer) this._mixer.setTime(0);
     }
 
-    // 1) 体・脚を待機ポーズへ（この後の頭・腕の上書きより先に）
+    const h = frame.head;
+
+    // 1) 体・脚を待機ポーズへ（この後の上書きより先に）
     if (this._mixer) this._mixer.update(dt);
 
-    // 2) ルートの位置（頭の真下・足を床に）と向き（頭のヨーへ追従）
-    const h = frame.head;
+    // 2) しゃがみ演出: 前フレームのフィードバックで決まった膝角を適用
+    this._applyKnee(dt);
+
+    // 3) ルートの位置（頭の真下）と向き（頭のヨーへ追従）
     this.group.position.x = THREE.MathUtils.damp(this.group.position.x, h.x, CFG.POS_DAMP, dt);
     this.group.position.z = THREE.MathUtils.damp(this.group.position.z, h.z, CFG.POS_DAMP, dt);
 
@@ -263,14 +316,41 @@ export class PlayerAvatar {
 
     this.group.updateMatrixWorld(true);
 
-    // 3) 記録の頭の高さに正確に合わせる（モデル原点・足位置のズレを吸収）
+    // 4) 記録の頭の高さに合わせる（アバター全体が上下）
     if (this._bones.head) {
-      const dy = h.y - this._bones.head.getWorldPosition(this._v).y;
-      this.group.position.y += dy;
+      this.group.position.y += h.y - this._bones.head.getWorldPosition(this._v).y;
       this.group.updateMatrixWorld(true);
     }
 
-    // 4) 頭の向きを記録どおりに（HEAD_FIX_EULER でレスト姿勢差を補正）
+    // 4b) すね先の床貫通量を測ってフィードバック（次フレームの膝角）＋残差の接地補正
+    if (CFG.CROUCH_BEND) {
+      let minTipY = Infinity;
+      for (const s of ["L", "R"]) {
+        const t = this._shinTip[s];
+        if (t) minTipY = Math.min(minTipY, t.getWorldPosition(this._v).y);
+      }
+      if (Number.isFinite(minTipY)) {
+        const penetration = -minTipY; // 床より下なら正
+        // 漏れ積分器: 貫通があれば曲げを増やし、無ければ立ち姿勢へ戻る（フレームレート非依存）
+        this._kneeBend = THREE.MathUtils.clamp(
+          this._kneeBend +
+            (CFG.KNEE_KP * penetration - CFG.KNEE_DECAY * this._kneeBend) * dt,
+          0,
+          CFG.KNEE_MAX
+        );
+        if (CFG.FOOT_PLANT > 0 && Math.abs(minTipY) > 1e-3) {
+          this.group.position.y -= minTipY * CFG.FOOT_PLANT;
+          this.group.updateMatrixWorld(true);
+        }
+      }
+    }
+
+    // 脚フェードの基準（足元ワールドY）を更新
+    if (this._echoShader) {
+      this._echoShader.uniforms.uFeetY.value = this.group.getWorldPosition(this._v).y;
+    }
+
+    // 5) 頭の向きを記録どおりに（HEAD_FIX_EULER でレスト姿勢差を補正）
     if (this._bones.head && this._bones.head.parent) {
       this._qFix.setFromEuler(
         this._eFix.set(CFG.HEAD_FIX_EULER.x, CFG.HEAD_FIX_EULER.y, CFG.HEAD_FIX_EULER.z)
@@ -283,10 +363,41 @@ export class PlayerAvatar {
       this._bones.head.updateMatrixWorld(true);
     }
 
-    // 5) 腕の2ボーンIK
+    // 6) 腕の2ボーンIK
     if (CFG.ARM_IK) {
       this._solveArm("L", frame.handLeft, CFG.ELBOW_HINT_L);
       this._solveArm("R", frame.handRight, CFG.ELBOW_HINT_R);
+    }
+  }
+
+  /**
+   * しゃがみ演出。膝角 `_kneeBend`（4b のフィードバックで決まる）を平滑化しつつ
+   * 脚（腿・すね）と腰へ「レスト回転 × X軸まわりの曲げ」で適用する。
+   * rotate* を累積させないため毎フレーム rest から置き直す。
+   * mixer.update() の直後・ルート配置の前に呼ぶ。
+   */
+  _applyKnee(dt) {
+    if (!CFG.CROUCH_BEND) return;
+    this._kneeApplied = THREE.MathUtils.damp(
+      this._kneeApplied,
+      this._kneeBend,
+      CFG.KNEE_SMOOTH,
+      dt
+    );
+    const k = this._kneeApplied * CFG.CROUCH_SIGN;
+    const bend = {
+      upperLegL: -CFG.KNEE_THIGH_RATIO * k, // 腿を前へ
+      upperLegR: -CFG.KNEE_THIGH_RATIO * k,
+      lowerLegL: k, // すねを曲げる（膝）
+      lowerLegR: k,
+      hips: -CFG.KNEE_HIP_RATIO * k // 腰の前傾（既定 0）
+    };
+    for (const key of Object.keys(bend)) {
+      const bone = this._bones[key];
+      const rest = this._restQ[key];
+      if (!bone || !rest) continue;
+      this._qDelta.setFromAxisAngle(this._xAxis, bend[key]);
+      bone.quaternion.copy(rest).multiply(this._qDelta);
     }
   }
 

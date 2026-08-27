@@ -13,6 +13,7 @@ export const BONES = {
   head: "Head",
   neck: "Neck",
   chest: "Torso",
+  spine: "Abdomen",
   hips: "Hips",
   shoulderL: "Shoulder.L",
   upperArmL: "UpperArm.L",
@@ -21,7 +22,13 @@ export const BONES = {
   shoulderR: "Shoulder.R",
   upperArmR: "UpperArm.R",
   lowerArmR: "LowerArm.R",
-  handR: "Palm.R"
+  handR: "Palm.R",
+  upperLegL: "UpperLeg.L",
+  lowerLegL: "LowerLeg.L",
+  footL: "Foot.L",
+  upperLegR: "UpperLeg.R",
+  lowerLegR: "LowerLeg.R",
+  footR: "Foot.R"
 };
 
 // 体・脚を自然な立ちポーズに保つための待機アニメ。無ければバインドポーズのまま。
@@ -53,9 +60,29 @@ export const ELBOW_HINT_L = { x: 0.25, y: -1, z: -0.35 };
 export const ELBOW_HINT_R = { x: -0.25, y: -1, z: -0.35 };
 export const HAND_ORIENT = false; // 手ボーンの向きを記録データに合わせる。要実機調整なので既定 off（位置だけ合わせる）
 
+// --- しゃがみ演出（頭が下がったら膝を曲げる）---
+// 3点トラッキングでは脚は取得できない。頭を記録の高さに合わせるとアバター全体が沈み、
+// 棒立ちの脚が床にめり込む。そこで「すねの先が床から出た量」をフィードバックして
+// 膝の曲げ量を自動調整し、足を接地させたまま腰を落とす（＝しゃがんで見える）。
+export const CROUCH_BEND = true;
+export const KNEE_KP = 120; // フィードバック係数 rad/(m·s)。すね先の床貫通に応じて膝角を増やす速さ
+export const KNEE_MAX = 2.4; // rad。膝の最大曲げ（約137度）
+export const KNEE_DECAY = 4; // 1/s。貫通が無いとき曲げを立ち姿勢へ戻す速さ
+export const KNEE_SMOOTH = 18; // 適用する曲げ角の平滑化（カクつき防止）
+export const KNEE_THIGH_RATIO = 0.55; // 膝角に対する「腿を前に出す」割合（見た目のスクワット感）
+export const KNEE_HIP_RATIO = 0; // 膝角に対する腰の前傾割合。>0 で前かがみ寄り
+export const CROUCH_SIGN = 1; // 膝が逆（後ろ）に曲がるなら -1
+export const FOOT_PLANT = 0.5; // フィードバックが追いつくまでの残差を吸収する接地補正 0..1
+
 // --- 見た目（「過去の自分」のエコー）---
 export const COLOR = 0x9fe1ff;
 export const OPACITY = 0.34;
 export const RENDER_ORDER = 6; // 雨(InstancedMesh)より後に描く
 export const WRIST_ORB = true; // 手首に小さな発光球。IK が多少ズレても手の位置が分かる保険＆ホログラム感
 export const WRIST_ORB_RADIUS = 0.035;
+
+// 下半身を足元に向けて薄くフェード（推定の脚のアラを隠す・ホログラム感）
+export const LEG_FADE = true;
+export const LEG_FADE_TOP = 0.95; // 足元からこの高さ(m)で通常の不透明度
+export const LEG_FADE_BOTTOM = 0.05; // 足元からこの高さ(m)以下は LEG_FADE_MIN 倍
+export const LEG_FADE_MIN = 0.0; // 足元での不透明度係数（0 = 完全に消える）
