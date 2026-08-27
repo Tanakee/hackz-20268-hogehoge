@@ -27,6 +27,15 @@ const camera = new THREE.PerspectiveCamera(
 // cameraをsceneに登録しておかないとそれらが描画対象に含まれず表示されない。
 scene.add(camera);
 
+// リプレイのPlayerAvatar（GLTFモデル、pbrMetallicRoughnessマテリアル）は
+// 光源がないと真っ黒で見えなくなる。他の演出はすべてMeshBasicMaterial
+// （光源不要）のため、これまで光源が一つも存在しなかった。
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+scene.add(hemiLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+dirLight.position.set(0.5, 1, 0.3);
+scene.add(dirLight);
+
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
