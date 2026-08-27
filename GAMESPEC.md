@@ -29,7 +29,7 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMR（複合現実）ゲーム�
 ### 3.1 状態遷移
 
 ```
-START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → START（自動遷移・再挑戦）
+START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START（再挑戦）
 ```
 
 | 状態 | 内容 |
@@ -38,10 +38,14 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → START（自動�
 | PLAYING | 雨が降り、避け続ける。制限時間 or ライフ切れで終了 |
 | CLEAR | 制限時間（初期値30秒）を生き残った |
 | GAMEOVER | ライフが0になった |
-| REPLAY | 直前のプレイを記録データから再生。終了後は**自動でSTARTに戻る** |
+| REPLAY | 直前のプレイを記録データから再生 |
+| RESULT | リプレイ後、クリア/ゲームオーバーとスコア（被弾回数・生存時間）を表示する画面。トリガーで START へ |
 
 - CLEAR・GAMEOVERどちらも同じ演出でREPLAYに遷移する（演出の差異なし）
+- CLEAR/GAMEOVER → REPLAY の遷移は、演出（ReplayScreen）のフェード＋余韻が終わってから `GameManager.startReplay()` を呼んで行う（尺は演出側の管轄）
 - リプレイ中の一時停止・巻き戻しは**初期実装では行わない**（将来拡張候補）
+
+> **RESULT 状態について（Phase 2 で core と要調整）**：現状 `GameManager` の状態機械に RESULT は無い（REPLAY 終了で `finishReplay()` が直接 START に戻す）。RESULT 画面を独立させるなら core に RESULT 状態の追加が必要。追加しない場合は StartScreen が START 中に結果表示を兼ねる形にする。
 
 ### 3.2 クリア条件・ライフ
 
@@ -78,9 +82,11 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → START（自動�
 
 ### 被弾時の演出（3つ同時）
 
-1. **画面フラッシュ**（赤く瞬間点灯）
+1. **画面フラッシュ**（赤く瞬間点灯）… 視界全体。当たった位置は問わず、その場の水しぶき等のエフェクトは初期実装では入れない
 2. **被弾SE**（フリー素材）
-3. **コントローラー振動**（WebXR Haptic Actuator）
+3. **コントローラー振動**（WebXR Haptic Actuator）… どの部位に当たっても**左右両方**のコントローラーを鳴らす
+
+- `hit` イベントの payload = `{ rainIndex, part, livesRemaining }`（`part` は `'head' | 'handLeft' | 'handRight'`。被弾のワールド座標は含まない）
 
 ---
 
@@ -111,16 +117,20 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → START（自動�
 
 - 背景は**PICO 4 Ultraのパススルー機能を使い、現実世界を透過表示**
 - 雨・アバターのみをCG（Three.js）でオーバーレイ描画する
-- **フォールバック**：パススルー（`immersive-ar`）が動作しない場合は `immersive-vr` に切り替え、**宇宙空間（星空背景）**を表示する
+- ~~**フォールバック**：パススルー（`immersive-ar`）が動作しない場合は `immersive-vr` + 星空背景~~
+  → **Phase 1 で PICO 4 Ultra 実機のパススルー動作を確認済み。MVP では MR モードのみ実装し、星空フォールバックは作らない**（デモ保険として欲しい場合のみ別途判断）
 - パフォーマンス確認事項（Phase 1で検証）：パススルー使用時に雨粒150個のInstancedMesh描画と両立できるか
 
 ---
 
 ## 7. UI / HUD
 
+- UI は DOM オーバーレイではなく、**視界に追従する3Dパネル（CanvasTexture を貼った Mesh）**で描く（ヘッドセット内で dom-overlay が不安定なため。Phase 1 で決定）
 - HUDは**視界に固定追従**（頭の動きに追従して常に視界内に表示）
-- タイマー：残り秒数を数字で表示
-- ライフ：**ハートアイコン3つ**（被弾で1つずつ消える）
+- タイマー：残り秒数を数字で表示（`GameManager.timeRemaining` を参照）
+- ライフ：**ハートアイコン3つ**（被弾で1つずつ消える。`GameManager.lives` を参照）
+- **リプレイ中の HUD**：`Replayer.progress`（0〜1）を使った**進行バー**を表示する
+- **RESULT 画面**：クリア / ゲームオーバーの見出し ＋ スコア（被弾回数・生存時間）＋「トリガーでもう一度」の案内
 
 ---
 
@@ -149,7 +159,8 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → START（自動�
 - [ ] 被弾時：画面フラッシュ + SE + コントローラー振動
 - [ ] プレイ内容（頭・手・雨の位置）を記録
 - [ ] リプレイをARのまま棒人間アバターで再生（プレイヤーが物理的に歩き回って観察）
-- [ ] リプレイ終了後、自動でSTARTに戻る
+- [ ] リプレイ中の HUD 進行バー
+- [ ] RESULT 画面（クリア/ゲームオーバー + スコア）→ トリガーで再挑戦
 - [ ] MRパススルー背景 + 雨のCGオーバーレイ
 - [ ] HUD：視界追従、ハートアイコン・タイマー表示
 
@@ -169,6 +180,9 @@ export const RAIN_SPEED_SLOW = 1.5;     // m/s（ゲーム中の見かけの雨�
 export const RAIN_SPEED_REAL = 7.0;     // m/s（現実の雨速・リプレイ後の速度）
 export const REPLAY_MULTIPLIER = RAIN_SPEED_REAL / RAIN_SPEED_SLOW; // ≒ 4.67倍
 export const RAIN_COUNT = 150;          // 同時に存在する雨粒数
+export const RAIN_SPAWN_RADIUS = 1.2;   // m（雨の出現半径・xz平面／プレイヤー中心）
+export const RAIN_SPAWN_HEIGHT = 2.2;   // m（雨の出現上限の高さ）
+export const RAIN_GROUND_Y = 0;         // m（この高さで再出現）
 export const PLAYER_HEAD_RADIUS = 0.15; // m
 export const PLAYER_HAND_RADIUS = 0.15; // m（実機調整前提）
 export const GAME_DURATION = 30;        // 秒
