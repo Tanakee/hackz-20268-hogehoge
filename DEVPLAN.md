@@ -51,21 +51,29 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMRゲーム。
 │   │   └── Replayer.js           # 記録データをREPLAY_MULTIPLIER倍速で再生
 │   │
 │   ├── presentation/             # [演出担当]
-│   │   ├── RainRenderer.js       # 雨粒の描画（InstancedMesh・水滴シェーダー）
-│   │   ├── PlayerAvatar.js       # リプレイ時の棒人間アバター（記録データに追従）
-│   │   ├── HitEffect.js          # 被弾演出（画面フラッシュ・コントローラー振動）
-│   │   ├── HUD.js                # VR内UI（タイマー・ハートアイコン）・視界追従
-│   │   ├── StartScreen.js        # スタート画面（トリガーボタンで開始）
+│   │   ├── RainRenderer.js       # 雨粒の描画（InstancedMesh・縦ストリーク・風で傾く）
+│   │   ├── PlayerAvatar.js       # リプレイ時の人型アバター（Quaternius glTF・頭追従＋腕Two-Bone IK・脚固定）
+│   │   ├── HitEffect.js          # 被弾演出（赤フラッシュ・左右コントローラー振動）
+│   │   ├── HUD.js                # VR内UI（残秒・ハート・リプレイ進行バー）・視界追従の3Dパネル
+│   │   ├── ColliderIndicator.js  # PLAYING中、頭・手の当たり判定半径を半透明球で可視化
+│   │   ├── TitleScreen.js        # START中のタイトル演出（宙で止まった雨が液体の文字を結ぶ＋開始看板）
+│   │   ├── StartScreen.js        # START/RESULT のパネルと selectstart（start/startReplay/restart）
+│   │   ├── ScorePanel.js         # RESULT のスコア＋ランク（S/A/B/C）カウントアップ表示
 │   │   ├── ReplayScreen.js       # リプレイ開始/終了フェード演出
-│   │   └── SoundManager.js       # SE（被弾音・クリア音・雨音ループ）・フリー素材
+│   │   ├── SoundManager.js       # SE（rain ループ / hit / clear / gameover）・すべて CC0
+│   │   └── _panel.js             # CanvasTexture パネル生成ヘルパー
 │   │
 │   └── utils/
 │       └── constants.js          # 共有定数のみ
 │
-├── assets/
-│   └── sounds/                   # [演出担当]
+├── public/                       # そのままのURLで配信（[演出担当]）
+│   ├── sounds/                   # rain.mp3 / hit.mp3 / clear.mp3 / gameover.mp3（+ README）
+│   └── models/                   # avatar.glb（Quaternius「Man」CC0）（+ README）
 └── package.json                  # 共有
 ```
+
+> 音声・アバターは当初 `assets/sounds/` を想定していたが、Vite の配信の都合で実体は
+> `public/sounds/` `public/models/`（`${import.meta.env.BASE_URL}` 経由で読む）。
 
 **ゲーム処理担当：** `src/core/` 以下すべて
 **演出担当：** `src/presentation/` 以下すべて
@@ -81,13 +89,19 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMRゲーム。
 core（ゲーム処理）                    presentation（演出）
 ────────────────────────────────     ──────────────────────────────
 RainPhysics.positions（Float32Array）→ RainRenderer が毎フレーム読む（PLAYING中）
-Replayer.frame（補間済みの記録フレーム）→ RainRenderer・PlayerAvatar が読む（REPLAY中）
+Replayer.frame（補間済みの記録フレーム）→ RainRenderer・PlayerAvatar・HUD・SoundManager が読む（REPLAY中）
 Replayer.progress（0〜1）             → HUD が読む（リプレイ進行バー）
+GameManager.state / lives / timeRemaining → HUD・StartScreen・ScorePanel・TitleScreen・ColliderIndicator が毎フレーム読む
 GameManager.on('hit', payload)       → SoundManager・HitEffect・HUD がリッスン
-GameManager.on('clear')              → ReplayScreen・SoundManager がリッスン
-GameManager.on('gameover')           → ReplayScreen・SoundManager がリッスン
-GameManager.on('stateChange', state) → HUD・StartScreen・ReplayScreen がリッスン
+GameManager.on('clear')              → ReplayScreen・SoundManager・StartScreen・ScorePanel がリッスン
+GameManager.on('gameover')           → ReplayScreen・SoundManager・StartScreen・ScorePanel がリッスン
+GameManager.on('stateChange', state) → HUD・StartScreen・ReplayScreen・SoundManager がリッスン
 ```
+
+- SE は `public/sounds/` に配置（`rain` / `hit` / `clear` / `gameover`。すべて CC0。出典・加工は同 README）
+- リプレイ用アバターは `public/models/avatar.glb`（Quaternius「Man」CC0。詳細は同 README）
+- `TitleScreen.js` / `ScorePanel.js` は `index.js` に1モジュール足すだけの追加モジュールで、
+  StartScreen・core・状態機械には手を入れていない（TitleScreen は START 中、ScorePanel は RESULT 中だけ描画）
 
 - `core` 側は `presentation` を直接 import しない
 - `presentation` 側は `core` のデータ/イベントを**読むだけ**。ただし状態を進める
@@ -176,15 +190,19 @@ main
 ### Phase 3：統合（Phase 2完了後）
 
 - [x] `main.js` でcore/presentationを接続（イベント・データの配線）
-- [ ] PLAYING → CLEAR/GAMEOVER → REPLAY → RESULT → START の一連フロー動作確認（実機確認待ち）
-- [x] `PlayerAvatar.js` - 棒人間アバター実装（頭・手を球、胴体を棒で接続）
+- [x] PLAYING → CLEAR/GAMEOVER → RESULT ⇄ REPLAY → START の一連フローを実機で確認
+- [x] `PlayerAvatar.js` - 人型アバター（Quaternius glTF・頭追従＋腕Two-Bone IK・脚固定・身長自動スケール）。実機確認済み
 - [x] `ReplayScreen.js` - リプレイ開始/終了のフェード演出
 
 ### Phase 4：調整・仕上げ
 
-- [ ] 実機で難易度調整（`RAIN_COUNT`・`RAIN_SPEED_SLOW`・`GAME_DURATION`）
-- [ ] パフォーマンス確認（雨粒150本で90fps維持できるか）
+- [ ] 実機で難易度調整（`RAIN_COUNT`・`RAIN_SPEED_SLOW`・`GAME_DURATION`）※実機フィードバックで一部反映済み・引き続き調整
+- [ ] パフォーマンス確認（`RAIN_COUNT` 本で90fps維持できるか）
 - [ ] リプレイ体験の確認（「本物の雨を避けていた」驚きが伝わるか）
+- [x] `SoundManager.js` に gameover 音を追加、SE 4種を CC0 素材で用意（`public/sounds/`）
+- [x] `TitleScreen.js` - START 中のタイトル演出（宙で止まった雨が液体の文字を結ぶ＋「トリガーで開始」看板）
+- [x] `ScorePanel.js` - RESULT にスコア＋ランク（S/A/B/C）カウントアップ表示
+- [ ] タイトル演出の各フェーズ（SUSPEND/PAINT/HEARTBEAT）の実機での見え方調整
 - [ ] Vercelデプロイ・発表用URL確定
 
 ---
