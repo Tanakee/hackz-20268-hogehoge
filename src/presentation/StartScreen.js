@@ -9,10 +9,9 @@ const REDUCED_MOTION =
 
 /**
  * スタート画面 兼 結果画面（視界追従の3Dパネル）。
- * START 状態のときだけ表示し、コントローラーのトリガー（selectstart）で `game.start()` を呼ぶ。
- *   - 初回 : 「雨をよけろ / トリガーで開始」
- *   - ラウンド後 : 「CLEAR / GAME OVER ＋ 被弾回数・生存時間 ＋ もう一度」
- * ※ core に RESULT 状態が無いため、START 中に結果表示を兼ねる（GAMESPEC 3.1 の注記）。
+ * START / RESULT 状態のときだけ表示する。
+ *   - START  : 「雨をよけろ / トリガーで開始」→ トリガーで `game.start()`
+ *   - RESULT : 「CLEAR / GAME OVER ＋ 被弾回数・生存時間 ＋ もう一度」→ トリガーで `game.restart()`
  * ※ presentation から core への呼び出しはライフサイクルメソッドのみ（DEVPLAN 接続ルール）。
  */
 export class StartScreen {
@@ -34,6 +33,7 @@ export class StartScreen {
 
     this._onSelect = () => {
       if (this.game?.state === "START") this.game.start();
+      else if (this.game?.state === "RESULT") this.game.restart();
     };
     for (const controller of this.controllers) {
       controller.addEventListener?.("selectstart", this._onSelect);
@@ -87,7 +87,8 @@ export class StartScreen {
   }
 
   update(dt, ctx) {
-    const show = ctx.game?.state === "START";
+    const state = ctx.game?.state;
+    const show = state === "START" || state === "RESULT";
     this.group.visible = show;
     if (!show) return;
 
