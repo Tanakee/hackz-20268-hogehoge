@@ -43,9 +43,11 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START
 
 - CLEAR・GAMEOVERどちらも同じ演出でREPLAYに遷移する（演出の差異なし）
 - CLEAR/GAMEOVER → REPLAY の遷移は、演出（ReplayScreen）のフェード＋余韻が終わってから `GameManager.startReplay()` を呼んで行う（尺は演出側の管轄）
+- REPLAY → RESULT の遷移は `Replayer` が再生完了時に自分で `GameManager.finishReplay()` を呼んで行う（core内で完結。presentationは`Replayer.isFinished`/`progress`を読むだけでよい）
+- RESULT → START の遷移は、RESULT画面のトリガー操作を検知した presentation 側が `GameManager.restart()` を呼んで行う
 - リプレイ中の一時停止・巻き戻しは**初期実装では行わない**（将来拡張候補）
 
-> **RESULT 状態について（Phase 2 で core と要調整）**：現状 `GameManager` の状態機械に RESULT は無い（REPLAY 終了で `finishReplay()` が直接 START に戻す）。RESULT 画面を独立させるなら core に RESULT 状態の追加が必要。追加しない場合は StartScreen が START 中に結果表示を兼ねる形にする。
+> **RESULT 状態について**：対応済み。`GameManager` に `RESULT` 状態を追加し、`finishReplay()` は REPLAY→RESULT に遷移するよう変更した。RESULT→START は新設の `restart()` を呼ぶ。
 
 ### 3.2 クリア条件・ライフ
 
@@ -129,7 +131,7 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START
 - HUDは**視界に固定追従**（頭の動きに追従して常に視界内に表示）
 - タイマー：残り秒数を数字で表示（`GameManager.timeRemaining` を参照）
 - ライフ：**ハートアイコン3つ**（被弾で1つずつ消える。`GameManager.lives` を参照）
-- **リプレイ中の HUD**：`Replayer.progress`（0〜1）を使った**進行バー**を表示する
+- **リプレイ中の HUD**：`Replayer.frame.livesRemaining` / `.timeRemaining` から、その瞬間の**ハート・残り秒数を復元表示**し、あわせて `Replayer.progress`（0〜1）の**進行バー**も表示する
 - **RESULT 画面**：クリア / ゲームオーバーの見出し ＋ スコア（被弾回数・生存時間）＋「トリガーでもう一度」の案内
 
 ---

@@ -91,8 +91,8 @@ GameManager.on('stateChange', state) → HUD・StartScreen・ReplayScreen がリ
 
 - `core` 側は `presentation` を直接 import しない
 - `presentation` 側は `core` のデータ/イベントを**読むだけ**。ただし状態を進める
-  **ライフサイクルメソッド**（`GameManager.start()` / `GameManager.startReplay()`）は
-  presentation から呼ぶ。core のフィールドを直接書き換えることはしない
+  **ライフサイクルメソッド**（`GameManager.start()` / `GameManager.startReplay()` /
+  `GameManager.restart()`）は presentation から呼ぶ。core のフィールドを直接書き換えることはしない
 - **リプレイ中に仮想カメラは存在しない**：視点はプレイヤーが被っているHMDの実トラッキングをそのまま使う（ゲーム中と同じレンダリングパイプライン）。アバター・雨は記録データを`local-floor`座標にそのまま再配置するだけで、カメラ制御コンポーネントは作らない
 
 ### Phase 2 実装の前提（演出↔core 合意事項・2026-08-27）
@@ -114,7 +114,8 @@ GameManager.on('stateChange', state) → HUD・StartScreen・ReplayScreen がリ
   （被弾のワールド座標は含まない）
 - CLEAR/GAMEOVER → REPLAY は **core が自動遷移しない**。演出（ReplayScreen）が
   フェード＋余韻を終えたタイミングで `game.startReplay()` を呼ぶ。尺は ReplayScreen が持つ
-- REPLAY → 次状態への復帰は `Replayer` が `game.finishReplay()` を呼ぶ（core 内で完結）
+- REPLAY → RESULT は `Replayer` が再生完了時に `game.finishReplay()` を呼ぶ（core 内で完結）。
+  RESULT → START は、RESULT画面のトリガー操作を検知した presentation 側が `game.restart()` を呼ぶ
 - リプレイのコマ間補間は **core（Replayer）側で行う**。presentation は `replayer.frame` を
   そのまま描くだけ。`replayer.progress`（0〜1）を HUD が参照する
 - スタート操作：StartScreen が `ctx.controllers` の `selectstart` を検知して `game.start()` を呼ぶ
