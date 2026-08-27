@@ -48,16 +48,16 @@ PICO 4 Ultra上で動作するWebXR製の雨避けMRゲーム。
 │   │   ├── RainPhysics.js        # 雨粒の位置更新・速度管理
 │   │   ├── PlayerCollider.js     # 頭・コントローラーの球コライダー・当たり判定
 │   │   ├── Recorder.js           # 毎フレームの頭・手・雨粒位置と被弾イベントを記録
-│   │   ├── Replayer.js           # 記録データをREPLAY_MULTIPLIER倍速で再生
-│   │   └── ReplayCamera.js       # リプレイ中のフリーカメラ移動制御
+│   │   └── Replayer.js           # 記録データをREPLAY_MULTIPLIER倍速で再生
 │   │
 │   ├── presentation/             # [演出担当]
 │   │   ├── RainRenderer.js       # 雨粒の描画（InstancedMesh・水滴シェーダー）
-│   │   ├── PlayerAvatar.js       # リプレイ時の人型簡易アバター（記録データに追従）
-│   │   ├── HUD.js                # VR内UI（タイマー・ライフ残数）
-│   │   ├── StartScreen.js        # スタート画面
-│   │   ├── ReplayScreen.js       # リプレイ演出（速度表示・開始/終了フェード）
-│   │   └── SoundManager.js       # SE（被弾音・クリア音・雨音）
+│   │   ├── PlayerAvatar.js       # リプレイ時の棒人間アバター（記録データに追従）
+│   │   ├── HitEffect.js          # 被弾演出（画面フラッシュ・コントローラー振動）
+│   │   ├── HUD.js                # VR内UI（タイマー・ハートアイコン）・視界追従
+│   │   ├── StartScreen.js        # スタート画面（トリガーボタンで開始）
+│   │   ├── ReplayScreen.js       # リプレイ開始/終了フェード演出
+│   │   └── SoundManager.js       # SE（被弾音・クリア音・雨音ループ）・フリー素材
 │   │
 │   └── utils/
 │       └── constants.js          # 共有定数のみ
@@ -129,23 +129,23 @@ main
 
 **ゲーム処理担当**
 - [ ] `RainPhysics.js` - 雨粒の位置配列を毎フレーム更新（`positions: Float32Array`）
-- [ ] `PlayerCollider.js` - 頭・手の球コライダー、雨粒との距離判定
-- [ ] `GameManager.js` - 状態遷移・ライフ管理（3回被弾でGAMEOVER）・タイマー（30秒）
+- [ ] `PlayerCollider.js` - 頭・手の球コライダー（各0.15m）、雨粒との距離判定
+- [ ] `GameManager.js` - 状態遷移・ライフ管理（3回被弾でGAMEOVER）・タイマー（30秒）・REPLAY終了後の自動START遷移
 - [ ] `Recorder.js` - フレームごとに頭・手・雨粒位置・被弾イベントをバッファに記録
 - [ ] `Replayer.js` - 記録データを `REPLAY_MULTIPLIER` 倍速で再生するイテレーター
 
 **演出担当**
 - [ ] `RainRenderer.js` - InstancedMeshで雨粒を描画（位置はPhysicsから受け取るだけ）
-- [ ] `HUD.js` - タイマー・ライフ残数のVR内表示
-- [ ] `StartScreen.js` - VR内スタート画面（コントローラーボタンで開始）
-- [ ] `SoundManager.js` - 被弾音・クリア音・雨音の最低限実装
+- [ ] `HitEffect.js` - 被弾演出（画面フラッシュ赤点灯 + コントローラー振動）
+- [ ] `HUD.js` - 視界追従UI（ハートアイコン3つ・タイマー）
+- [ ] `StartScreen.js` - VR内スタート画面（トリガーボタンで開始）
+- [ ] `SoundManager.js` - 被弾音・クリア音・雨音ループ（フリー素材）
 
 ### Phase 3：統合（Phase 2完了後）
 
 - [ ] `main.js` でcore/presentationを接続（イベント・データの配線）
-- [ ] PLAYING → CLEAR/GAMEOVER → REPLAY → START の一連フロー動作確認
-- [ ] `PlayerAvatar.js` - リプレイ時の人型簡易アバター実装
-- [ ] `ReplayCamera.js` - スティックで移動・コントローラー向きで視点のフリーカメラ
+- [ ] PLAYING → CLEAR/GAMEOVER → REPLAY → START（自動）の一連フロー動作確認
+- [ ] `PlayerAvatar.js` - 棒人間アバター実装（頭・手を球、胴体を棒で接続）
 - [ ] `ReplayScreen.js` - リプレイ開始/終了のフェード演出
 
 ### Phase 4：調整・仕上げ
@@ -157,27 +157,24 @@ main
 
 ---
 
-## 未決事項（実装前に決定が必要なもの）
+## 未決事項（Phase 1で技術確認が必要なもの）
 
 | # | 内容 | 担当 |
 |---|------|------|
-| 1 | WebXR `immersive-ar` でPICO 4 Ultraのパススルーが使えるか → Phase 1で実機確認 | 共有 |
-| 2 | コントローラー（手）側の当たり判定コライダー半径 | ゲーム処理 |
-| 3 | リプレイのフリーカメラ移動範囲制限・酔い対策（スナップターン等）の要否 | ゲーム処理 |
-| 4 | リプレイ中の一時停止・巻き戻しを実装するか（初期スコープ外が推奨） | 共有 |
-| 5 | HUDの具体的な見た目・配置 | 演出 |
-| 6 | SE・雨音の方向性 | 演出 |
+| 1 | WebXR `immersive-ar` でPICO 4 Ultraのパススルーが使えるか → Phase 1で実機確認。動かない場合は `immersive-vr` + 宇宙空間背景に切り替え | 共有 |
+| 2 | パススルー時のパフォーマンス（雨粒150個のInstancedMesh描画と両立できるか） | ゲーム処理 |
 
 ---
 
 ## 共有定数（constants.js）
 
 ```js
-export const RAIN_SPEED_SLOW = 1.5;    // m/s（ゲーム中の見かけの雨速）
-export const RAIN_SPEED_REAL = 7.0;    // m/s（現実の雨速・リプレイ後の速度）
+export const RAIN_SPEED_SLOW = 1.5;     // m/s（ゲーム中の見かけの雨速）
+export const RAIN_SPEED_REAL = 7.0;     // m/s（現実の雨速・リプレイ後の速度）
 export const REPLAY_MULTIPLIER = RAIN_SPEED_REAL / RAIN_SPEED_SLOW; // ≒ 4.67倍
-export const RAIN_COUNT = 150;         // 同時に存在する雨粒数（難易度調整の主要パラメータ）
+export const RAIN_COUNT = 150;          // 同時に存在する雨粒数（難易度調整の主要パラメータ）
 export const PLAYER_HEAD_RADIUS = 0.15; // m
+export const PLAYER_HAND_RADIUS = 0.15; // m（実機調整前提）
 export const GAME_DURATION = 30;        // 秒
 export const PLAYER_LIVES = 3;          // 被弾許容回数
 ```
