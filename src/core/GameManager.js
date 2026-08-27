@@ -5,16 +5,23 @@ export const GameState = Object.freeze({
   PLAYING: "PLAYING",
   CLEAR: "CLEAR",
   GAMEOVER: "GAMEOVER",
-  REPLAY: "REPLAY"
+  REPLAY: "REPLAY",
+  RESULT: "RESULT"
 });
 
 /**
  * ゲーム全体の状態遷移・ライフ・タイマーを管理する。
- * presentation側はイベント（on）を購読するだけで、GameManagerを書き換えない。
+ * presentation側はイベント（on）を購読するだけで、GameManagerを書き換えない
+ * （例外はライフサイクルメソッド呼び出し：start() / startReplay() / restart()）。
  *
- * 遷移: START → PLAYING → (CLEAR | GAMEOVER) → REPLAY → START
- * CLEAR/GAMEOVERからREPLAYへの遷移は startReplay() を呼んだタイミングで起きる
- * （被弾/クリア演出の尺は presentation 側の管轄のため、ここでは自動遷移しない）。
+ * 遷移: START → PLAYING → (CLEAR | GAMEOVER) → REPLAY → RESULT → START
+ * - CLEAR/GAMEOVERからREPLAYへの遷移は startReplay() を呼んだタイミングで起きる
+ *   （被弾/クリア演出の尺は presentation 側の管轄のため、ここでは自動遷移しない）
+ * - REPLAYからRESULTへの遷移は Replayer が再生完了時に finishReplay() を呼んで起きる
+ *   （coreの中で完結する）
+ * - RESULTからSTARTへの遷移は presentation（結果画面のトリガー操作）が restart() を呼ぶ
+ * lives / timeRemaining は CLEAR〜RESULTの間、次の start() が呼ばれるまで保持されるため、
+ * RESULT画面のスコア表示（被弾回数・生存時間）はこれらから計算できる。
  */
 export class GameManager {
   constructor() {
@@ -82,6 +89,12 @@ export class GameManager {
   /** リプレイ再生が終わったタイミングで Replayer 側から呼ぶ */
   finishReplay() {
     if (this.state !== GameState.REPLAY) return;
+    this._setState(GameState.RESULT);
+  }
+
+  /** RESULT画面でのトリガー操作等、presentation側から呼ぶ */
+  restart() {
+    if (this.state !== GameState.RESULT) return;
     this._setState(GameState.START);
   }
 }

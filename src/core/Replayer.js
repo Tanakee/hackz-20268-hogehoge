@@ -58,19 +58,33 @@ function buildFrame({ gameTime, replayElapsed, head, handLeft, handRight, rainPo
  *
  * HUD復元用に gameTime / timeRemaining / livesRemaining も frame に含める。
  * livesRemainingは離散値のため補間せず、区間開始側フレームの値をそのまま使う。
+ *
+ * `progress`（0〜1、元のプレイ時間ベースの再生進捗）をHUDの進行バー表示用に公開する。
+ * 再生完了時は自分で `game.finishReplay()` を呼び、REPLAY→RESULT遷移をcore内で完結させる
+ * （presentation側はisFinishedやprogressをポーリングするだけでよい）。
  */
 export class Replayer {
-  constructor(frames, multiplier = REPLAY_MULTIPLIER) {
+  constructor(frames, game = null, multiplier = REPLAY_MULTIPLIER) {
     this.frames = frames;
+    this.game = game;
     this.multiplier = multiplier;
     this._elapsed = 0;
     this._index = 0;
     this._finished = frames.length === 0;
     this.frame = frames.length > 0 ? this._frameFromRecorded(frames[0], 0) : null;
+    if (this._finished) this.game?.finishReplay();
   }
 
   get isFinished() {
     return this._finished;
+  }
+
+  /** 元のプレイ時間ベースの再生進捗（0〜1） */
+  get progress() {
+    if (this.frames.length === 0) return 1;
+    const total = this.frames[this.frames.length - 1].t;
+    if (total <= 0) return 1;
+    return Math.min(1, (this.frame?.gameTime ?? 0) / total);
   }
 
   _frameFromRecorded(recorded, replayElapsed) {
@@ -124,6 +138,7 @@ export class Replayer {
         livesRemaining: current.livesRemaining
       });
       this._finished = true;
+      this.game?.finishReplay();
       return;
     }
 
