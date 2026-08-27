@@ -59,75 +59,13 @@ export class PlayerAvatar {
     this._fullHeadQuat = new THREE.Quaternion();
     this._restTarget = new THREE.Vector3();
 
-    // --- 一時的なデバッグ表示（原因調査用。解決したら削除する） ---
-    this._initDebugPanel(ctx.camera);
-    this._debugText("Loading model...");
-
     const loader = new GLTFLoader();
     loader.load(
       MODEL_URL,
-      (gltf) => {
-        try {
-          this._onLoaded(gltf);
-          this._debugText(`Loaded OK\nbones=${Object.keys(this._bones).length}/9\nready=${this._ready}`);
-        } catch (err) {
-          console.error("[PlayerAvatar] _onLoaded failed", err);
-          const stackLine = err.stack?.split("\n")[1]?.trim() ?? "";
-          this._debugText(`onLoaded ERROR:\n${err.message}\n${stackLine}`);
-        }
-      },
+      (gltf) => this._onLoaded(gltf),
       undefined,
-      (err) => {
-        console.warn(`[PlayerAvatar] ${MODEL_URL} の読み込みに失敗しました`, err);
-        this._debugText(`Load ERROR:\n${err?.message ?? err}`);
-      }
+      (err) => console.warn(`[PlayerAvatar] ${MODEL_URL} の読み込みに失敗しました`, err)
     );
-  }
-
-  _initDebugPanel(camera) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx2d = canvas.getContext("2d");
-    const texture = new THREE.CanvasTexture(canvas);
-    const panel = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.5, 0.375),
-      new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false })
-    );
-    panel.position.set(0, 0.1, -0.5);
-    panel.renderOrder = 999;
-    camera.add(panel);
-    this._debugCanvas = canvas;
-    this._debugCtx = ctx2d;
-    this._debugTexture = texture;
-    this._debugPanel = panel;
-    this._debugCamera = camera;
-  }
-
-  _debugText(text) {
-    console.log("[PlayerAvatar debug]", text);
-    if (!this._debugCtx) return;
-    const c = this._debugCtx;
-    c.clearRect(0, 0, this._debugCanvas.width, this._debugCanvas.height);
-    c.fillStyle = "rgba(0, 0, 0, 0.75)";
-    c.fillRect(0, 0, this._debugCanvas.width, this._debugCanvas.height);
-    c.fillStyle = "#00ff88";
-    c.font = "18px monospace";
-
-    // 長い1行（エラーメッセージ等）はパネル外にはみ出て見えなくなるため、折り返す。
-    const maxCharsPerLine = 44;
-    const lines = [];
-    for (const raw of String(text).split("\n")) {
-      if (raw.length === 0) {
-        lines.push("");
-        continue;
-      }
-      for (let i = 0; i < raw.length; i += maxCharsPerLine) {
-        lines.push(raw.slice(i, i + maxCharsPerLine));
-      }
-    }
-    lines.slice(0, 18).forEach((line, i) => c.fillText(line, 10, 26 + i * 22));
-    this._debugTexture.needsUpdate = true;
   }
 
   _onLoaded(gltf) {
@@ -151,14 +89,8 @@ export class PlayerAvatar {
 
     const missing = boneNames.filter((n) => !this._bones[n]);
     if (missing.length > 0) {
-      const allNames = [];
-      model.traverse((obj) => {
-        if (obj.name) allNames.push(obj.name);
-      });
-      const shoulderLike = allNames.filter((n) => /shoulder|arm|palm/i.test(n));
-      throw new Error(
-        `Missing bones: ${missing.join(", ")}\ntotalNamed=${allNames.length}\narmLike=${JSON.stringify(shoulderLike)}`
-      );
+      console.warn(`[PlayerAvatar] モデルにボーンが見つかりません: ${missing.join(", ")}`);
+      return;
     }
 
     // groupがidentity transformの今のうちに、バインドポーズの情報を確定させる。
@@ -334,11 +266,5 @@ export class PlayerAvatar {
       const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
       mats.forEach((m) => m.dispose?.());
     });
-    if (this._debugPanel) {
-      this._debugCamera?.remove(this._debugPanel);
-      this._debugPanel.geometry.dispose();
-      this._debugPanel.material.dispose();
-      this._debugTexture?.dispose();
-    }
   }
 }
