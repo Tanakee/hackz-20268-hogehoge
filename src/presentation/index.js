@@ -1,7 +1,9 @@
 import { RainRenderer } from "./RainRenderer.js";
+import { PlayerAvatar } from "./PlayerAvatar.js";
 import { HitEffect } from "./HitEffect.js";
 import { HUD } from "./HUD.js";
 import { StartScreen } from "./StartScreen.js";
+import { ReplayScreen } from "./ReplayScreen.js";
 import { SoundManager } from "./SoundManager.js";
 
 /**
@@ -10,15 +12,15 @@ import { SoundManager } from "./SoundManager.js";
  * @param {THREE.Scene} scene
  * @param {object} ctx - { renderer, camera, game, rainPhysics, replayer, controllers }
  * @returns {{ update(dt:number):void, dispose():void }}
- *
- * ※ PlayerAvatar / ReplayScreen は Phase 3 で追加してここに足す。
  */
 export function createPresentation(scene, ctx) {
   const modules = [
     new RainRenderer(scene, ctx),
+    new PlayerAvatar(scene, ctx),
     new HitEffect(scene, ctx),
     new HUD(scene, ctx),
     new StartScreen(scene, ctx),
+    new ReplayScreen(scene, ctx),
     new SoundManager(scene, ctx)
   ];
 

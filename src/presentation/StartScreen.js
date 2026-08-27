@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { PLAYER_LIVES, GAME_DURATION } from "../utils/constants.js";
 import { createPanel } from "./_panel.js";
 
 const REDUCED_MOTION =
@@ -7,8 +8,10 @@ const REDUCED_MOTION =
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /**
- * スタート画面（視界追従の3Dパネル）。
- * START 状態のときだけ表示し、コントローラーのトリガー（selectstart）で `game.start()` を呼ぶ。
+ * スタート画面 兼 結果画面（視界追従の3Dパネル）。
+ * START / RESULT 状態のときだけ表示する。
+ *   - START  : 「雨をよけろ / トリガーで開始」→ トリガーで `game.start()`
+ *   - RESULT : 「CLEAR / GAME OVER ＋ 被弾回数・生存時間 ＋ もう一度」→ トリガーで `game.restart()`
  * ※ presentation から core への呼び出しはライフサイクルメソッドのみ（DEVPLAN 接続ルール）。
  */
 export class StartScreen {
@@ -17,9 +20,10 @@ export class StartScreen {
     this.game = ctx.game;
     this.controllers = ctx.controllers ?? [];
     this._t = 0;
+    this._sig = null;
+    this._result = null; // { outcome, hits, survived }
 
     this.panel = createPanel({ worldWidth: 1.1, worldHeight: 0.6, pxWidth: 768, pxHeight: 420 });
-    this._drawStatic();
 
     this.group = new THREE.Group();
     this.group.position.set(0, -0.02, -1.4);
@@ -29,47 +33,91 @@ export class StartScreen {
 
     this._onSelect = () => {
       if (this.game?.state === "START") this.game.start();
+      else if (this.game?.state === "RESULT") this.game.restart();
     };
     for (const controller of this.controllers) {
       controller.addEventListener?.("selectstart", this._onSelect);
     }
+
+    const capture = (outcome) => {
+      const lives = Math.max(0, this.game.lives ?? 0);
+      this._result = {
+        outcome,
+        hits: PLAYER_LIVES - lives,
+        survived: outcome === "clear" ? GAME_DURATION : GAME_DURATION - (this.game.timeRemaining ?? 0)
+      };
+    };
+    this._offs = [
+      ctx.game.on("clear", () => capture("clear")),
+      ctx.game.on("gameover", () => capture("gameover"))
+    ];
   }
 
-  _drawStatic() {
+  _drawIntro() {
     this.panel.draw((c, w, h) => {
-      c.fillStyle = "rgba(8,12,22,0.55)";
-      c.fillRect(0, 0, w, h);
-      c.strokeStyle = "rgba(124,196,255,0.5)";
-      c.lineWidth = 3;
-      c.strokeRect(8, 8, w - 16, h - 16);
-
+      frame(c, w, h);
       c.textAlign = "center";
       c.textBaseline = "middle";
       c.fillStyle = "#eaf1ff";
       c.font = "700 88px system-ui, sans-serif";
       c.fillText("雨をよけろ", w / 2, h * 0.36);
-
       c.fillStyle = "#9fb4d6";
       c.font = "500 40px system-ui, sans-serif";
       c.fillText("トリガーを引いて開始", w / 2, h * 0.64);
     });
   }
 
+  _drawResult(r) {
+    this.panel.draw((c, w, h) => {
+      frame(c, w, h);
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillStyle = r.outcome === "clear" ? "#5ad19b" : "#ff6b6b";
+      c.font = "800 84px system-ui, sans-serif";
+      c.fillText(r.outcome === "clear" ? "CLEAR" : "GAME OVER", w / 2, h * 0.28);
+
+      c.fillStyle = "#cdd9ef";
+      c.font = "500 36px system-ui, sans-serif";
+      c.fillText(`被弾 ${r.hits} 回 ／ 生存 ${r.survived.toFixed(1)}s`, w / 2, h * 0.56);
+
+      c.fillStyle = "#9fb4d6";
+      c.font = "500 34px system-ui, sans-serif";
+      c.fillText("トリガーでもう一度", w / 2, h * 0.78);
+    });
+  }
+
   update(dt, ctx) {
-    const show = ctx.game?.state === "START";
+    const state = ctx.game?.state;
+    const show = state === "START" || state === "RESULT";
     this.group.visible = show;
     if (!show) return;
 
+    const r = this._result;
+    const sig = r ? `res|${r.outcome}|${r.hits}|${r.survived.toFixed(1)}` : "intro";
+    if (sig !== this._sig) {
+      if (r) this._drawResult(r);
+      else this._drawIntro();
+      this._sig = sig;
+    }
+
     this._t += dt;
-    const pulse = REDUCED_MOTION ? 1 : 1 + Math.sin(this._t * 2) * 0.01;
-    this.group.scale.setScalar(pulse);
+    this.group.scale.setScalar(REDUCED_MOTION ? 1 : 1 + Math.sin(this._t * 2) * 0.01);
   }
 
   dispose() {
+    this._offs?.forEach((off) => off && off());
     for (const controller of this.controllers) {
       controller.removeEventListener?.("selectstart", this._onSelect);
     }
     this.camera.remove(this.group);
     this.panel.dispose();
   }
+}
+
+function frame(c, w, h) {
+  c.fillStyle = "rgba(8,12,22,0.55)";
+  c.fillRect(0, 0, w, h);
+  c.strokeStyle = "rgba(124,196,255,0.5)";
+  c.lineWidth = 3;
+  c.strokeRect(8, 8, w - 16, h - 16);
 }
