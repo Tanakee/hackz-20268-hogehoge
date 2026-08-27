@@ -11,7 +11,10 @@ const REDUCED_MOTION =
  * スタート画面 兼 結果画面（視界追従の3Dパネル）。
  * START / RESULT 状態のときだけ表示する。
  *   - START  : 「雨をよけろ / トリガーで開始」→ トリガーで `game.start()`
- *   - RESULT : 「CLEAR / GAME OVER ＋ 被弾回数・生存時間 ＋ もう一度」→ トリガーで `game.restart()`
+ *   - RESULT : 「CLEAR / GAME OVER ＋ 被弾回数・生存時間」＋
+ *              右トリガーで「リプレイを見る」(`game.startReplay()`) ／
+ *              左トリガーで「終了してスタートへ」(`game.restart()`)
+ * リプレイを強制せず、結果を見た上でユーザーが選べるようにする（実機フィードバックにより変更）。
  * ※ presentation から core への呼び出しはライフサイクルメソッドのみ（DEVPLAN 接続ルール）。
  */
 export class StartScreen {
@@ -31,9 +34,17 @@ export class StartScreen {
     this.group.visible = true;
     this.camera.add(this.group);
 
-    this._onSelect = () => {
-      if (this.game?.state === "START") this.game.start();
-      else if (this.game?.state === "RESULT") this.game.restart();
+    this._onSelect = (event) => {
+      const state = this.game?.state;
+      if (state === "START") {
+        this.game.start();
+        return;
+      }
+      if (state === "RESULT") {
+        const hand = event?.target?.userData?.handedness;
+        if (hand === "right") this.game.startReplay();
+        else if (hand === "left") this.game.restart();
+      }
     };
     for (const controller of this.controllers) {
       controller.addEventListener?.("selectstart", this._onSelect);
@@ -73,16 +84,20 @@ export class StartScreen {
       c.textAlign = "center";
       c.textBaseline = "middle";
       c.fillStyle = r.outcome === "clear" ? "#5ad19b" : "#ff6b6b";
-      c.font = "800 84px system-ui, sans-serif";
-      c.fillText(r.outcome === "clear" ? "CLEAR" : "GAME OVER", w / 2, h * 0.28);
+      c.font = "800 76px system-ui, sans-serif";
+      c.fillText(r.outcome === "clear" ? "CLEAR" : "GAME OVER", w / 2, h * 0.22);
 
       c.fillStyle = "#cdd9ef";
-      c.font = "500 36px system-ui, sans-serif";
-      c.fillText(`被弾 ${r.hits} 回 ／ 生存 ${r.survived.toFixed(1)}s`, w / 2, h * 0.56);
+      c.font = "500 34px system-ui, sans-serif";
+      c.fillText(`被弾 ${r.hits} 回 ／ 生存 ${r.survived.toFixed(1)}s`, w / 2, h * 0.46);
+
+      c.fillStyle = "#7cc4ff";
+      c.font = "600 30px system-ui, sans-serif";
+      c.fillText("右トリガー：リプレイを見る", w / 2, h * 0.68);
 
       c.fillStyle = "#9fb4d6";
-      c.font = "500 34px system-ui, sans-serif";
-      c.fillText("トリガーでもう一度", w / 2, h * 0.78);
+      c.font = "500 30px system-ui, sans-serif";
+      c.fillText("左トリガー：終了してスタートへ", w / 2, h * 0.84);
     });
   }
 

@@ -131,6 +131,10 @@ renderer.setAnimationLoop((time) => {
       for (const hit of hits) game.registerHit(hit);
 
       recorder.record(dt, head, handLeft, handRight, rainPhysics.positions, hits, game.lives);
+
+      // 被弾した雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に
+      // 何フレームも重なり続けて多段ヒット（1回のニアミスでライフ全損）してしまう。
+      for (const hit of hits) rainPhysics.respawn(hit.rainIndex);
     }
   } else if (game.state === "REPLAY") {
     ctx.replayer?.update(dt);

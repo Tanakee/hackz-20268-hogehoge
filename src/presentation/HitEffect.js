@@ -12,13 +12,16 @@ const REDUCED_MOTION =
 
 /**
  * 被弾演出：視界全体の赤フラッシュ ＋ 左右両方のコントローラー振動。
- * `hit` イベントで発火。当たった位置は使わない（GAMESPEC 5）。
+ * `hit` イベント（PLAYING中）に加えて、REPLAY中は Replayer.frame.hits を見て
+ * 記録された被弾のタイミングでも同じ演出を再生する（GAMEOVERの原因をリプレイで
+ * 振り返れるようにするため）。当たった位置は使わない（GAMESPEC 5）。
  */
 export class HitEffect {
   constructor(scene, ctx) {
     this.camera = ctx.camera;
     this.renderer = ctx.renderer;
     this._flash = 0;
+    this._lastReplayHitGameTime = null;
 
     const material = new THREE.MeshBasicMaterial({
       color: 0xff3b3b,
@@ -36,10 +39,15 @@ export class HitEffect {
     this.mesh.visible = false;
     this.camera.add(this.mesh);
 
-    this._off = ctx.game.on("hit", () => {
-      this._flash = 1;
-      this._pulse();
-    });
+    this._offs = [
+      ctx.game.on("hit", () => {
+        this._flash = 1;
+        this._pulse();
+      }),
+      ctx.game.on("stateChange", (state) => {
+        if (state === "REPLAY") this._lastReplayHitGameTime = null;
+      })
+    ];
   }
 
   _pulse() {
@@ -56,7 +64,16 @@ export class HitEffect {
     }
   }
 
-  update(dt) {
+  update(dt, ctx) {
+    if (ctx?.game?.state === "REPLAY") {
+      const frame = ctx.replayer?.frame;
+      if (frame?.hits?.length && frame.gameTime !== this._lastReplayHitGameTime) {
+        this._lastReplayHitGameTime = frame.gameTime;
+        this._flash = 1;
+        this._pulse();
+      }
+    }
+
     if (this._flash > 0) {
       this._flash = Math.max(0, this._flash - dt / FLASH_DURATION);
     }
@@ -66,7 +83,7 @@ export class HitEffect {
   }
 
   dispose() {
-    this._off?.();
+    this._offs.forEach((off) => off && off());
     this.camera.remove(this.mesh);
     this.mesh.geometry.dispose();
     this.mesh.material.dispose();
