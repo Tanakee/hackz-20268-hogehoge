@@ -5,7 +5,7 @@ const SOUND_DIR = `${import.meta.env.BASE_URL}sounds/`;
 const RAIN_VOLUME = 0.5;
 
 /**
- * SE 管理：被弾音・クリア音・雨ループ（フリー素材）。
+ * SE 管理：被弾音・クリア音・ゲームオーバー音・雨ループ（すべて CC0 素材）。
  * 音声ファイルが未配置でもクラッシュしない（警告のみ）。
  * AudioContext はブラウザ仕様上ユーザー操作まで鳴らせないため、
  * コントローラーの selectstart で resume する。
@@ -18,14 +18,14 @@ export class SoundManager {
     ctx.camera.add(this.listener);
     this.controllers = ctx.controllers ?? [];
 
-    this.buffers = { rain: null, hit: null, clear: null };
+    this.buffers = { rain: null, hit: null, clear: null, gameover: null };
     this.rain = null;
     this._rainTarget = 0;
     this._rainGain = 0;
     this._lastReplayHitGameTime = null;
 
     const loader = new THREE.AudioLoader();
-    for (const name of ["rain", "hit", "clear"]) {
+    for (const name of ["rain", "hit", "clear", "gameover"]) {
       loader.load(
         SOUND_DIR + name + ".mp3",
         (buffer) => {
@@ -46,6 +46,7 @@ export class SoundManager {
     this._offs = [
       ctx.game.on("hit", () => this._oneShot("hit", 0.9)),
       ctx.game.on("clear", () => this._oneShot("clear", 0.9)),
+      ctx.game.on("gameover", () => this._oneShot("gameover", 0.9)),
       ctx.game.on("stateChange", (state) => {
         this._rainTarget = state === "PLAYING" || state === "REPLAY" ? RAIN_VOLUME : 0;
         if (state === "REPLAY") this._lastReplayHitGameTime = null;
