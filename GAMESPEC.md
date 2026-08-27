@@ -118,7 +118,7 @@ START → PLAYING → (CLEAR または GAMEOVER) → REPLAY → RESULT → START
 - 背景は**PICO 4 Ultraのパススルー機能を使い、現実世界を透過表示**
 - 雨・アバターのみをCG（Three.js）でオーバーレイ描画する
 - ~~**フォールバック**：パススルー（`immersive-ar`）が動作しない場合は `immersive-vr` + 星空背景~~
-  → **Phase 1 で PICO 4 Ultra 実機のパススルー動作を確認済み。MVP では MR モードのみ実装し、星空フォールバックは作らない**（デモ保険として欲しい場合のみ別途判断）
+  → **Phase 1 で PICO 4 Ultra 実機のパススルー動作を確認済み。MVP は MR モードのみ。星空フォールバックは実装しない（不採用で確定）**
 - パフォーマンス確認事項（Phase 1で検証）：パススルー使用時に雨粒150個のInstancedMesh描画と両立できるか
 
 ---
