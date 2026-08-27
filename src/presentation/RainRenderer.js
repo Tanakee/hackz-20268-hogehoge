@@ -9,8 +9,9 @@ const REPLAY_STREAK_SCALE = Math.min(REPLAY_MULTIPLIER, 3.5); // リプレイ時
 /**
  * 雨粒を InstancedMesh で描画する。
  * 位置は core から一方向で受け取るだけ：
- *   - PLAYING : ctx.rainPhysics.positions（Float32Array, 3要素/粒, local-floor座標）
- *   - REPLAY  : ctx.replayer.frame.rainPositions（記録データ）
+ *   - PLAYING / CLEAR / GAMEOVER : ctx.rainPhysics.positions（Float32Array, 3要素/粒, local-floor座標）
+ *   - REPLAY                     : ctx.replayer.frame.rainPositions（記録データ）
+ *   - START / RESULT             : 非表示（プレイ開始前・結果画面中に雨は降らない）
  */
 export class RainRenderer {
   constructor(scene, ctx) {
@@ -44,10 +45,14 @@ export class RainRenderer {
 
   /** その時点で読むべき雨の位置配列を返す（無ければ null） */
   _pickSource(ctx) {
-    if (ctx.game?.state === "REPLAY") {
+    const state = ctx.game?.state;
+    if (state === "REPLAY") {
       return ctx.replayer?.frame?.rainPositions ?? null;
     }
-    return ctx.rainPhysics?.positions ?? null;
+    if (state === "PLAYING" || state === "CLEAR" || state === "GAMEOVER") {
+      return ctx.rainPhysics?.positions ?? null;
+    }
+    return null; // START / RESULT
   }
 
   update(_dt, ctx) {

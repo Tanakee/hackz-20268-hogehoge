@@ -23,6 +23,9 @@ const camera = new THREE.PerspectiveCamera(
   0.01,
   20
 );
+// StartScreen/HUD/HitEffect等はcameraの子として3Dパネルを追加する実装のため、
+// cameraをsceneに登録しておかないとそれらが描画対象に含まれず表示されない。
+scene.add(camera);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
