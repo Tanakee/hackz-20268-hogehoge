@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GAME_DURATION, PLAYER_LIVES } from "../utils/constants.js";
 
 const REDUCED_MOTION =
   typeof window !== "undefined" &&
@@ -16,8 +17,8 @@ const REDUCED_MOTION =
  *             左→右へ液体の文字が満ちていく。文字は本物のグリフ形なので必ず読める。
  *             膜は絶えずうねり、縁がメニスカスのように光り、下端からしずくが垂れる。
  *   HEARTBEAT タイトル以外の宙の雨が、一瞬(0.42s)だけ“本当の速さ”(7m/s)で落ちて、また止まる
- *   HOLD      水膜が息づき、手前の目隠しが晴れて StartScreen の「トリガーで開始」が読める
- *   RELEASE   START を抜けると水膜が崩れ、粒がほどけて雨に戻りながら落ちて消える
+ *   HOLD      水膜が息づき、下に「▶ トリガーで開始」の看板が出る（明滅）。ゲームのタイトル画面
+ *   RELEASE   トリガーで START を抜けると確定フラッシュ→水膜が崩れ、粒が雨に戻って落ちて消える
  *
  * prefers-reduced-motion のときは即 HOLD（完成形を静止表示）。
  */
@@ -26,9 +27,10 @@ const CFG = {
   TITLE: "雨避け",
   SUBTITLE: "よけていた、つもりだった。",
 
-  DEEP: 0x3f7fbf, // 液体の濃い所
-  BRIGHT: 0xeaf6ff, // ハイライト
-  RIM: 0xffffff, // 縁・波紋の先端
+  DEEP: 0x2c6aa8, // 液体の地の色（読みやすい中間の青）
+  BRIGHT: 0xdcefff, // 上縁のハイライト
+  RIM: 0xffffff, // 波紋・書き先端
+  SHADOW: 0x05101c, // 文字の後ろの暗い縁（明るい部屋でも読めるように）
   RAIN_COLOR: 0xbcd6ff, // 宙吊り・降雨の粒
   WAKE_COLOR: 0xffffff, // 払われた粒の発光
 
@@ -46,16 +48,19 @@ const CFG = {
   TITLE_Y: 0.3, // タイトル中心の高さ（目線相対, m）
   TITLE_W: 1.55,
   TITLE_H: 0.46,
-  SUB_Y: -0.36, // 副題中心（タイトル中心からの相対, m）
-  SUB_W: 1.5,
-  SUB_H: 0.15,
+  SUB_Y: -0.4, // 副題中心（タイトル中心からの相対, m）
+  SUB_W: 1.44,
+  SUB_H: 0.18,
   WRAP_GAIN: 1.0, // 面の湾曲（1で自然、0で平面）
 
-  // 液体シェーダの効き（マシマシ用ノブ）
-  LIQ_WOBBLE: 1.0, // うねりの強さ
-  LIQ_RIM: 1.0, // 縁の光の強さ
-  LIQ_CAUSTIC: 1.0, // 内側の動く明るいムラ
-  RIPPLE_STRENGTH: 1.0, // 着弾波紋の強さ
+  // 液体シェーダの効き（読みやすさ優先で控えめが既定。上げると“濡れ”が強くなる）
+  LIQ_WOBBLE: 0.6, // 面のうねり（形は保つ）
+  LIQ_RIM: 0.8, // 上縁の光
+  LIQ_CAUSTIC: 0.4, // 内側の弱いムラ
+  RIPPLE_STRENGTH: 0.6, // 着弾波紋
+  STROKE_K: 0.03, // グリフを太らせる量（fontPx比）。0で素の字。細ひらがな対策で少しだけ
+  TEXT_SHADOW: true, // 文字の後ろに暗いコピーを敷いて可読性を上げる
+  BODY_ALPHA: 0.82, // 液体の地の不透明度（下げると透ける）
 
   DRIPS: 12, // しずくの数（タイトル＋副題合計）
   DRIP_FALL: 0.12, // しずくの落下距離(m)
@@ -69,8 +74,18 @@ const CFG = {
   REAL_SPEED: 7.0,
 
   SHOCKWAVE: true,
-  PROMPT_VEIL: true,
-  VEIL_COLOR: 0x0a0e16
+  PROMPT_VEIL: true, // 素の StartScreen パネルを隠すためのぼけた暗がり。実機で不要なら false
+  VEIL_COLOR: 0x0a0e16,
+  VEIL_OPACITY: 0.7,
+
+  // ゲームスタート画面としての体裁（HOLD で出る「トリガーで開始」の看板）
+  START_PROMPT: true,
+  PROMPT_LABEL: "トリガーで開始",
+  PROMPT_HINT: `雨をよけろ　—　${GAME_DURATION}秒`,
+  PROMPT_W: 1.02,
+  PROMPT_H: 0.34,
+  PROMPT_GAP: 0.16, // 副題の下端からの間隔(m)
+  PROMPT_PULSE_HZ: 0.9 // 明滅の速さ
 };
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -85,7 +100,7 @@ const LIQUID_FRAG = /* glsl */ `
   precision highp float;
   varying vec2 vUv;
   uniform sampler2D uGlyph;
-  uniform float uTime, uFill, uOpacity, uWobble, uRimK, uCaustic, uRippleK;
+  uniform float uTime, uFill, uOpacity, uWobble, uRimK, uCaustic, uRippleK, uBodyA;
   uniform vec3 uDeep, uBright, uRim;
   uniform vec3 uImpacts[${N_IMPACT}];
 
@@ -97,45 +112,51 @@ const LIQUID_FRAG = /* glsl */ `
     vec2 uv = vUv;
     float t = uTime;
 
+    // ごく弱いうねり（字の形は保つ）
     vec2 warp = vec2(
-      sin(uv.y*22.0 + t*1.7) + 0.6*sin(uv.x*13.0 - t*1.1),
-      sin(uv.x*18.0 - t*1.3) + 0.6*sin(uv.y*15.0 + t*0.9)
-    ) * 0.006 * uWobble;
+      sin(uv.y*18.0 + t*1.4) + 0.5*sin(uv.x*11.0 - t*0.9),
+      sin(uv.x*15.0 - t*1.1) + 0.5*sin(uv.y*13.0 + t*0.7)
+    ) * 0.0016 * uWobble;
 
+    // 着弾波紋（弱め）
     float ripple = 0.0;
     for (int i = 0; i < ${N_IMPACT}; i++) {
       vec3 im = uImpacts[i];
       if (im.z < 0.0) continue;
       float age = t - im.z;
-      if (age < 0.0 || age > 1.7) continue;
+      if (age < 0.0 || age > 1.4) continue;
       float d = distance(uv, im.xy);
-      ripple += sin(d*90.0 - age*26.0) * exp(-age*3.0) * exp(-d*10.0);
+      ripple += sin(d*70.0 - age*22.0) * exp(-age*3.5) * exp(-d*12.0);
     }
-    warp += ripple * 0.012 * uRippleK;
+    vec2 wuv = uv + warp + vec2(0.0, ripple * 0.004 * uRippleK);
 
-    float a = gA(uv + warp);
-
-    // 左→右の書き進み。先端に明るい水線。
-    float wipe = smoothstep(uFill, uFill - 0.06, uv.x);
-    float front = exp(-pow((uv.x - uFill) / 0.022, 2.0)) * step(0.5, gA(vec2(clamp(uFill,0.0,1.0), uv.y)) + a);
+    float a = gA(wuv);
+    float wipe = smoothstep(uFill + 0.02, uFill - 0.05, uv.x);
     a *= wipe;
-    if (a < 0.02 && front < 0.02) discard;
 
-    // 縁（メニスカス）
-    float inA = gA(uv + warp + vec2(0.012, 0.0)) * gA(uv + warp - vec2(0.012, 0.0));
-    float rim = clamp((a - inA) * 5.0, 0.0, 1.0);
-    rim += smoothstep(0.55, 0.12, a) * step(0.06, a) * 0.7;
-    rim *= uRimK;
+    // 上下の縁（上＝光、下＝陰）だけを細く
+    float up = gA(wuv + vec2(0.0, 0.009));
+    float dn = gA(wuv - vec2(0.0, 0.009));
+    float inGlyph = step(0.25, a);
+    float topRim = clamp((dn - up) * 2.4, 0.0, 1.0) * inGlyph;
+    float botRim = clamp((up - dn) * 2.4, 0.0, 1.0) * inGlyph;
 
-    // 内側で動くコースティック
-    float caus = (0.5 + 0.5*sin(uv.x*9.0 + t*1.5 + sin(uv.y*7.0 - t)))
-               * (0.5 + 0.5*sin(uv.y*11.0 - t*1.2));
+    // 弱いコースティック
+    float caus = sin(uv.x*7.0 + t*1.1 + sin(uv.y*5.0 - t*0.6));
 
-    vec3 col = mix(uDeep, uBright, clamp(caus*0.6*uCaustic + ripple*2.2*uRippleK, 0.0, 1.0));
-    col += rim * uRim;
-    col += front * uRim * 1.6;
+    vec3 col = mix(uDeep, uDeep * 1.28, uv.y);        // 上ほど少し明るい
+    col += caus * 0.05 * uCaustic;
+    col += topRim * uBright * (0.85 * uRimK);
+    col = max(col - botRim * 0.22, 0.0);
+    col += ripple * 0.10 * uRippleK;
 
-    float alpha = (a * (0.55 + 0.45*rim) + front*0.55) * uOpacity;
+    // 書き先端の細い水線
+    float front = exp(-pow((uv.x - uFill) / 0.016, 2.0))
+                * step(0.08, gA(vec2(clamp(uFill, 0.001, 0.999), uv.y)));
+    col += front * uBright * 0.7;
+
+    float alpha = (a * uBodyA + front * 0.45) * uOpacity;
+    if (alpha < 0.02) discard;
     gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
   }
 `;
@@ -192,9 +213,16 @@ export class TitleScreen {
       };
     }
 
-    // 液体の水膜（本物のグリフ形＋液体シェーダ）
-    this._title = this._makeSurface(CFG.TITLE, 132, CFG.TITLE_W, CFG.TITLE_H, CFG.TITLE_Y);
-    this._sub = this._makeSurface(CFG.SUBTITLE, 60, CFG.SUB_W, CFG.SUB_H, CFG.TITLE_Y + CFG.SUB_Y);
+    // タイトル = 液体マシマシ。副題 = 小さい細ひらがなが潰れないよう“ほぼ素の水”で（読み優先）。
+    this._title = this._makeSurface(CFG.TITLE, 132, CFG.TITLE_W, CFG.TITLE_H, CFG.TITLE_Y, {});
+    this._sub = this._makeSurface(CFG.SUBTITLE, 66, CFG.SUB_W, CFG.SUB_H, CFG.TITLE_Y + CFG.SUB_Y, {
+      wobble: 0.14,
+      rim: 0.35,
+      caustic: 0.08,
+      bodyA: 0.95,
+      strokeK: 0.085,
+      shadowScale: [1.03, 1.14, 1.03]
+    });
     this.world.add(this._title.mesh, this._sub.mesh);
 
     // しずく
@@ -236,21 +264,38 @@ export class TitleScreen {
     // カメラ子: 開始プロンプトの目隠し・「手を動かして」
     this.hud = new THREE.Group();
     this.camera.add(this.hud);
+    // 目隠し = 素の StartScreen パネルだけを隠す、ふちがぼけた暗がり（板に見えないように）
     this._veil = null;
     if (CFG.PROMPT_VEIL) {
+      const vc = document.createElement("canvas");
+      vc.width = vc.height = 256;
+      const vg = vc.getContext("2d");
+      const grad = vg.createRadialGradient(128, 128, 10, 128, 128, 128);
+      const cc = new THREE.Color(CFG.VEIL_COLOR);
+      const rgb = `${(cc.r * 255) | 0},${(cc.g * 255) | 0},${(cc.b * 255) | 0}`;
+      grad.addColorStop(0, `rgba(${rgb},0.92)`);
+      grad.addColorStop(0.6, `rgba(${rgb},0.55)`);
+      grad.addColorStop(1, `rgba(${rgb},0)`);
+      vg.fillStyle = grad;
+      vg.fillRect(0, 0, 256, 256);
+      const vtex = new THREE.CanvasTexture(vc);
+      vtex.colorSpace = THREE.SRGBColorSpace;
       this._veil = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.3, 0.72),
+        new THREE.PlaneGeometry(1.15, 0.62),
         new THREE.MeshBasicMaterial({
-          color: CFG.VEIL_COLOR, transparent: true, opacity: 0, depthWrite: false,
-          depthTest: false, toneMapped: false
+          map: vtex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, toneMapped: false
         })
       );
-      this._veil.position.set(0, -0.02, -1.36);
+      this._veil.position.set(0, -0.02, -1.38);
       this._veil.renderOrder = 10050;
+      this._veilTex = vtex;
       this.hud.add(this._veil);
     }
     this._paintPanel = this._makePaintPrompt();
     if (this._paintPanel) this.hud.add(this._paintPanel.mesh);
+
+    this._startPrompt = CFG.START_PROMPT ? this._makeStartPrompt() : null;
+    if (this._startPrompt) this.world.add(this._startPrompt.mesh);
 
     // アンカー
     this._anchor = new THREE.Vector3();
@@ -268,7 +313,8 @@ export class TitleScreen {
     this._impactHead = { t: 0, s: 0 };
   }
 
-  _makeSurface(text, fontPx, worldW, worldH, yOffset) {
+  _makeSurface(text, fontPx, worldW, worldH, yOffset, opts = {}) {
+    const strokeK = opts.strokeK ?? CFG.STROKE_K;
     // グリフをキャンバスに（細い画は stroke で太らせる）
     const W = 1024;
     const H = Math.max(160, Math.round((worldH / worldW) * W));
@@ -280,11 +326,13 @@ export class TitleScreen {
     g.fillStyle = "#fff";
     g.strokeStyle = "#fff";
     g.lineJoin = "round";
-    g.lineWidth = fontPx * 0.16;
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.font = `800 ${fontPx}px system-ui, sans-serif`;
-    g.strokeText(text, W / 2, H / 2);
+    if (strokeK > 0) {
+      g.lineWidth = fontPx * strokeK;
+      g.strokeText(text, W / 2, H / 2);
+    }
     g.fillText(text, W / 2, H / 2);
 
     const tex = new THREE.CanvasTexture(cv);
@@ -319,10 +367,11 @@ export class TitleScreen {
         uTime: { value: 0 },
         uFill: { value: 0 },
         uOpacity: { value: 0 },
-        uWobble: { value: CFG.LIQ_WOBBLE },
-        uRimK: { value: CFG.LIQ_RIM },
-        uCaustic: { value: CFG.LIQ_CAUSTIC },
-        uRippleK: { value: CFG.RIPPLE_STRENGTH },
+        uWobble: { value: opts.wobble ?? CFG.LIQ_WOBBLE },
+        uRimK: { value: opts.rim ?? CFG.LIQ_RIM },
+        uCaustic: { value: opts.caustic ?? CFG.LIQ_CAUSTIC },
+        uRippleK: { value: opts.ripple ?? CFG.RIPPLE_STRENGTH },
+        uBodyA: { value: opts.bodyA ?? CFG.BODY_ALPHA },
         uDeep: { value: new THREE.Color(CFG.DEEP) },
         uBright: { value: new THREE.Color(CFG.BRIGHT) },
         uRim: { value: new THREE.Color(CFG.RIM) },
@@ -332,6 +381,28 @@ export class TitleScreen {
     const mesh = new THREE.Mesh(pg, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 3;
+
+    // 文字の後ろの暗いコピー（明るい部屋でも輪郭が読めるように）
+    let shadow = null;
+    if (CFG.TEXT_SHADOW) {
+      shadow = new THREE.Mesh(
+        pg,
+        new THREE.MeshBasicMaterial({
+          map: tex,
+          color: new THREE.Color(CFG.SHADOW),
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      const ss = opts.shadowScale ?? [1.045, 1.09, 1.045];
+      shadow.scale.set(ss[0], ss[1], ss[2]);
+      shadow.frustumCulled = false;
+      shadow.renderOrder = 2.6; // 液体(3)より先＝後ろ
+      mesh.add(shadow);
+    }
 
     // グリフのアルファからサンプル点（フィーダー目標）と下端点（しずく）を作る
     const data = g.getImageData(0, 0, W, H).data;
@@ -365,6 +436,7 @@ export class TitleScreen {
     return {
       mesh,
       mat,
+      shadow,
       tex,
       cv,
       W, H, minX, minY, bw, bh,
@@ -399,6 +471,57 @@ export class TitleScreen {
     mesh.position.set(0, -0.32, -0.95);
     mesh.renderOrder = 10051;
     return { mesh, tex };
+  }
+
+  /** ゲームスタート画面の「トリガーで開始」看板（ワールド固定・タイトルの下）*/
+  _makeStartPrompt() {
+    const W = 960;
+    const H = Math.round((CFG.PROMPT_H / CFG.PROMPT_W) * W);
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, W, H);
+    // 角丸の半透明バー＋シアンの縁（StartScreen と同系統）
+    const pad = 6;
+    rrect(g, pad, pad, W - pad * 2, H - pad * 2, 22);
+    g.fillStyle = "rgba(8,12,22,0.62)";
+    g.fill();
+    g.lineWidth = 3;
+    g.strokeStyle = "rgba(124,196,255,0.6)";
+    g.stroke();
+
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    // ▶ トリガーで開始
+    g.shadowColor = "#8fd0ff";
+    g.shadowBlur = 22;
+    g.fillStyle = "#eef4ff";
+    g.font = `700 ${Math.round(H * 0.34)}px system-ui, sans-serif`;
+    g.fillText("▶  " + CFG.PROMPT_LABEL, W / 2, H * 0.4);
+    g.shadowBlur = 0;
+    // ヒント
+    g.fillStyle = "#9fb4d6";
+    g.font = `500 ${Math.round(H * 0.16)}px system-ui, sans-serif`;
+    g.fillText(CFG.PROMPT_HINT, W / 2, H * 0.72);
+    // ライフ ♥×n
+    g.fillStyle = "#ff8fa3";
+    g.font = `600 ${Math.round(H * 0.15)}px system-ui, sans-serif`;
+    g.fillText("♥".repeat(Math.max(1, PLAYER_LIVES | 0)), W / 2, H * 0.9);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(CFG.PROMPT_W, CFG.PROMPT_H),
+      new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, toneMapped: false
+      })
+    );
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 12;
+    return { mesh, tex, base: 0 };
   }
 
   /** アンカー基準ローカル(x,y は目線相対 / z は前方が負) → ワールド */
@@ -439,6 +562,18 @@ export class TitleScreen {
       s.impactHead = 0;
       for (const im of s.impacts) im.set(0, 0, -1);
     }
+
+    // スタート看板を副題の下に（同じロックアップとして並べる）
+    if (this._startPrompt) {
+      const py = CFG.TITLE_Y + CFG.SUB_Y - CFG.SUB_H * 0.5 - CFG.PROMPT_GAP - CFG.PROMPT_H * 0.5;
+      this._l2w(0, py, -CFG.DIST, this._v);
+      this._startPrompt.mesh.position.copy(this._v);
+      this._startPrompt.mesh.quaternion.copy(this._anchorYaw);
+      this._startPrompt.mesh.scale.setScalar(1);
+      this._startPrompt.mesh.material.opacity = 0;
+      this._startPrompt.base = 0;
+    }
+    this._flash = 0;
 
     // 粒のホーム＆フィーダー目標
     const R = CFG.ROOM;
@@ -518,8 +653,12 @@ export class TitleScreen {
         d.bright = 0.12;
       }
     }
-    if (this._veil) this._veil.material.opacity = 0;
+    if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY;
     if (this._paintPanel) this._paintPanel.mesh.material.opacity = 0;
+    if (this._startPrompt) {
+      this._startPrompt.base = 1;
+      this._startPrompt.mesh.material.opacity = 1;
+    }
   }
 
   _readHands() {
@@ -553,6 +692,7 @@ export class TitleScreen {
     if (!isStart && this._wasStart && this._phase !== "RELEASE" && this._built) {
       this._phase = "RELEASE";
       this._phaseT = 0;
+      this._flash = 1; // 開始の確定フラッシュ
     }
     this._wasStart = isStart;
     if (!this._built) {
@@ -576,6 +716,7 @@ export class TitleScreen {
     }
     this._updateSurfaces(dt);
     this._updateDrips(dt);
+    this._updatePrompt(dt);
     this._render();
   }
 
@@ -595,7 +736,7 @@ export class TitleScreen {
         this._paintPanel.mesh.material.opacity =
           sm((this._phaseT - CFG.SUSPEND_SEC * 0.6) / (CFG.SUSPEND_SEC * 0.4)) * 0.9;
       }
-      if (this._veil) this._veil.material.opacity = 0.5 * this._vis;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis;
       if (this._phaseT >= CFG.SUSPEND_SEC) {
         this._phase = "PAINT";
         this._phaseT = 0;
@@ -603,7 +744,7 @@ export class TitleScreen {
     } else if (P === "PAINT") {
       this._paint(dt);
       for (const d of this._d) this._shiver(d, 1);
-      if (this._veil) this._veil.material.opacity = 0.5 * this._vis;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis;
       if (this._phaseT >= CFG.PAINT_SEC) {
         for (const d of this._d) d.frozen.copy(d.pos);
         this._paintFade = this._paintPanel ? this._paintPanel.mesh.material.opacity : 0;
@@ -650,8 +791,9 @@ export class TitleScreen {
       if (this._paintPanel) {
         this._paintPanel.mesh.material.opacity = (this._paintFade ?? 0.9) * (1 - sm(this._phaseT / 0.5));
       }
-      if (this._veil) {
-        this._veil.material.opacity = 0.5 * (1 - sm(this._phaseT / (CFG.CONDENSE_SEC * 0.6))) * this._vis;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis; // 開始プロンプトを隠したままに
+      if (this._startPrompt) {
+        this._startPrompt.base = sm((this._phaseT - CFG.CONDENSE_SEC * 0.55) / (CFG.CONDENSE_SEC * 0.45));
       }
       if (feedersDone && this._title.fillNow > 0.98 && this._sub.fillNow > 0.98) {
         this._phase = "HEARTBEAT";
@@ -692,8 +834,9 @@ export class TitleScreen {
         this._phaseT = 0;
       }
     } else if (P === "HOLD") {
-      if (this._veil) this._veil.material.opacity = 0;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * this._vis; // 素の StartScreen パネルを隠したまま
       if (this._ring) this._ring.material.opacity = 0;
+      if (this._startPrompt) this._startPrompt.base = 1;
       for (const s of [this._title, this._sub]) {
         s.fillTarget = 1;
         s.mat.uniforms.uOpacity.value = this._vis;
@@ -726,6 +869,8 @@ export class TitleScreen {
         s.fillTarget = 1 - p; // 右→左に引く
         s.mat.uniforms.uOpacity.value = (1 - p) * this._vis;
       }
+      if (this._startPrompt) this._startPrompt.base = 1 - p;
+      if (this._veil) this._veil.material.opacity = CFG.VEIL_OPACITY * (1 - p) * this._vis;
       this._vis = 1 - p;
       if (p >= 1) {
         this._built = false;
@@ -740,7 +885,27 @@ export class TitleScreen {
       s.fillNow = THREE.MathUtils.damp(s.fillNow, s.fillTarget, 6, dt);
       s.mat.uniforms.uFill.value = s.fillNow;
       s.mat.uniforms.uTime.value = this._t;
+      if (s.shadow) {
+        const o = s.mat.uniforms.uOpacity.value;
+        s.shadow.material.opacity = 0.5 * o * THREE.MathUtils.clamp((s.fillNow - 0.03) / 0.15, 0, 1);
+      }
     }
+  }
+
+  _updatePrompt(dt) {
+    if (!this._startPrompt) return;
+    this._flash = Math.max(0, (this._flash || 0) - dt / 0.3);
+    const sp = this._startPrompt;
+    const w = Math.sin(this._t * Math.PI * 2 * CFG.PROMPT_PULSE_HZ);
+    const targetOp = REDUCED_MOTION ? sp.base : sp.base * (0.82 + 0.18 * w);
+    sp.mesh.material.opacity = THREE.MathUtils.damp(
+      sp.mesh.material.opacity,
+      Math.min(1.2, targetOp + this._flash),
+      16,
+      dt
+    );
+    const sc = (REDUCED_MOTION ? 1 : 1 + 0.015 * w) + this._flash * 0.1;
+    sp.mesh.scale.setScalar(sc);
   }
 
   _updateDrips(dt) {
@@ -852,6 +1017,7 @@ export class TitleScreen {
       s.mesh.geometry.dispose();
       s.mat.dispose();
       s.tex.dispose();
+      if (s.shadow) s.shadow.material.dispose();
     }
     if (this._dripMesh) {
       this._dripMesh.geometry.dispose();
@@ -864,15 +1030,33 @@ export class TitleScreen {
     if (this._veil) {
       this._veil.geometry.dispose();
       this._veil.material.dispose();
+      this._veilTex?.dispose();
     }
     if (this._paintPanel) {
       this._paintPanel.mesh.geometry.dispose();
       this._paintPanel.mesh.material.dispose();
       this._paintPanel.tex.dispose();
     }
+    if (this._startPrompt) {
+      this._startPrompt.mesh.geometry.dispose();
+      this._startPrompt.mesh.material.dispose();
+      this._startPrompt.tex.dispose();
+    }
   }
 }
 
 function easeIn(x) {
   return x <= 0 ? 0 : x >= 1 ? 1 : x * x * x;
+}
+
+/** 角丸矩形パス */
+function rrect(c, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + rr, y);
+  c.arcTo(x + w, y, x + w, y + h, rr);
+  c.arcTo(x + w, y + h, x, y + h, rr);
+  c.arcTo(x, y + h, x, y, rr);
+  c.arcTo(x, y, x + w, y, rr);
+  c.closePath();
 }
