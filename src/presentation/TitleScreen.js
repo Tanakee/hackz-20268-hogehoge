@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { createPanel } from "./_panel.js";
 
 const REDUCED_MOTION =
   typeof window !== "undefined" &&
@@ -8,75 +7,138 @@ const REDUCED_MOTION =
 
 /**
  * タイトル演出「よけていた、つもりだった」。
- * START 状態のあいだだけ、プレイヤーの実際の部屋（ワールド空間）で再生する。
+ * START のあいだ、プレイヤーの実際の部屋（ワールド空間・背面含む）で再生する。
  * 状態機械・StartScreen・core は無変更（index.js に1モジュール足すだけ）。
  *
- *   SUSPEND   雨が降ってきて、床の手前で “止まる”。部屋じゅう（背面も）に宙吊りになる。
- *   PAINT     「手を動かして」。手/頭で宙の雨を払うと、当たった粒が押しのけられ光る。
- *   CONDENSE  宙の雨がこちら側へ湾曲した面に集まり、結露のようにタイトルを結ぶ。
- *             下に細い手書きで副題が一画ずつ書かれる。文字はときどき “しずく” を垂らす。
- *   HEARTBEAT タイトル以外の宙の雨が、一瞬だけ “本当の速さ” で落ちて、また止まる。
- *   HOLD      文字が息づき、手前の目隠しが晴れて StartScreen の「トリガーで開始」が読める。
- *   RELEASE   START を抜けると、粒がほどけて雨に戻りながら落ちて消える（＝ゲームの雨へ）。
+ *   SUSPEND   雨が降ってきて床の手前で止まり、部屋じゅうに宙吊りになる
+ *   PAINT     手/頭で宙の雨を払うと、当たった粒が押しのけられ発光しながら尾を引く
+ *   CONDENSE  宙の雨がタイトルの“水膜”へ流れ込み、粒が着弾するたび波紋が走って
+ *             左→右へ液体の文字が満ちていく。文字は本物のグリフ形なので必ず読める。
+ *             膜は絶えずうねり、縁がメニスカスのように光り、下端からしずくが垂れる。
+ *   HEARTBEAT タイトル以外の宙の雨が、一瞬(0.42s)だけ“本当の速さ”(7m/s)で落ちて、また止まる
+ *   HOLD      水膜が息づき、手前の目隠しが晴れて StartScreen の「トリガーで開始」が読める
+ *   RELEASE   START を抜けると水膜が崩れ、粒がほどけて雨に戻りながら落ちて消える
  *
- * prefers-reduced-motion のときは即 HOLD（完成形を静止表示・HEARTBEAT なし）。
+ * prefers-reduced-motion のときは即 HOLD（完成形を静止表示）。
  */
 
 const CFG = {
   TITLE: "雨避け",
   SUBTITLE: "よけていた、つもりだった。",
 
-  RAIN_COLOR: 0xbcd6ff, // 宙吊り・降雨時
-  GLYPH_COLOR: 0xf2f8ff, // 結露した文字
-  WAKE_COLOR: 0xffffff, // 手で払われた粒の発光
+  DEEP: 0x3f7fbf, // 液体の濃い所
+  BRIGHT: 0xeaf6ff, // ハイライト
+  RIM: 0xffffff, // 縁・波紋の先端
+  RAIN_COLOR: 0xbcd6ff, // 宙吊り・降雨の粒
+  WAKE_COLOR: 0xffffff, // 払われた粒の発光
 
-  COUNT: 2400, // 粒の総数（InstancedMesh・CFG で調整）
-  TITLE_FRAC: 0.46, // うちタイトル文字に使う割合
-  SUB_FRAC: 0.24, // うち副題に使う割合（細いひらがなが潰れないよう多め。残りは部屋の雨）
-  SUB_FAT: 1.9, // 副題の粒を太めに描く倍率（可読性）
+  COUNT: 2000, // 粒の総数（宙の雨＋水膜へ流し込むフィーダー）
+  FEED_FRAC: 0.5, // うち水膜へ流し込む割合（残りは部屋の雨）
+  FEED_TITLE_BIAS: 0.78, // フィーダーのうちタイトルへ向かう割合（残りは副題へ）
 
   SUSPEND_SEC: 2.4,
-  PAINT_SEC: 3.4,
-  CONDENSE_SEC: 1.6, // 1粒あたりの集合時間
-  CONDENSE_STAGGER: 0.6,
-  SUB_REVEAL_SEC: 1.4, // 副題を左→右に書く時間
-  HEARTBEAT_SEC: 0.42, // “本当の速さ”で落ちる時間
+  PAINT_SEC: 3.2,
+  CONDENSE_SEC: 2.0, // 水膜が満ちるまで
+  HEARTBEAT_SEC: 0.42,
   RELEASE_SEC: 0.6,
 
   DIST: 1.95, // アンカーからタイトル面までの距離(m)
-  HEIGHT: 0.28, // タイトル中心の高さ（目線からの相対, m）
-  GLYPH_W: 1.55, // 文字が占める横幅(m)
-  GLYPH_H: 0.44, // 縦(m)
-  WRAP_GAIN: 1.0, // タイトル面の湾曲の強さ（1で自然、0で平面）
-  GLASS_JITTER: 0.01, // 結露の厚み方向のばらつき(m)
+  TITLE_Y: 0.3, // タイトル中心の高さ（目線相対, m）
+  TITLE_W: 1.55,
+  TITLE_H: 0.46,
+  SUB_Y: -0.36, // 副題中心（タイトル中心からの相対, m）
+  SUB_W: 1.5,
+  SUB_H: 0.15,
+  WRAP_GAIN: 1.0, // 面の湾曲（1で自然、0で平面）
 
-  SUB_DROP_Y: -0.34, // 副題の中心（タイトル中心からの相対, m）
-  SUB_W: 1.42,
-  SUB_H: 0.17, // 縦を少し広げて細いひらがなの画をつぶさない
-  SUB_TREMOR: 0.004, // 手書きの震え(m)
+  // 液体シェーダの効き（マシマシ用ノブ）
+  LIQ_WOBBLE: 1.0, // うねりの強さ
+  LIQ_RIM: 1.0, // 縁の光の強さ
+  LIQ_CAUSTIC: 1.0, // 内側の動く明るいムラ
+  RIPPLE_STRENGTH: 1.0, // 着弾波紋の強さ
 
-  ROOM: { x: 2.4, zFront: 2.6, zBack: 1.6, yBot: -1.5, yTop: 2.6 }, // 宙吊りの雨のワールド範囲（背面含む）
-  SHIVER: 0.0018, // 宙吊り時の微振動(m)
+  DRIPS: 12, // しずくの数（タイトル＋副題合計）
+  DRIP_FALL: 0.12, // しずくの落下距離(m)
+  DRIP_PERIOD: [1.6, 3.6], // しずくの周期(s) 範囲
 
-  PAINT_RADIUS: 0.45, // 手が雨を払う半径(m)
-  PAINT_PUSH: 3.6, // 払う強さ
-  PAINT_RETURN: 0.9, // 払われた粒が定位置へ戻る速さ（小さいほど尾が残る）
+  ROOM: { x: 2.4, zFront: 2.6, zBack: 1.6, yBot: -1.5, yTop: 2.6 },
+  SHIVER: 0.0018,
+  PAINT_RADIUS: 0.45,
+  PAINT_PUSH: 3.6,
+  PAINT_RETURN: 0.9,
+  REAL_SPEED: 7.0,
 
-  DRIP: true,
-  DRIP_FRAC: 0.06, // しずくを垂らす文字粒の割合
-  DRIP_AMOUNT: 0.05, // 垂れる距離(m)
-  DRIP_PERIOD: 3.2, // 周期(s)
-
-  REAL_SPEED: 7.0, // HEARTBEAT の落下速度(m/s)（RAIN_SPEED_REAL 相当）
-
-  SHOCKWAVE: true, // HEARTBEAT のとき足元に走る波紋
-  PROMPT_VEIL: true, // HOLD になるまで手前の開始プロンプトをうっすら隠す
-  VEIL_COLOR: 0x0a0e16,
-  SHOW_PAINT_PROMPT: true
+  SHOCKWAVE: true,
+  PROMPT_VEIL: true,
+  VEIL_COLOR: 0x0a0e16
 };
 
 const UP = new THREE.Vector3(0, 1, 0);
 const FWD = new THREE.Vector3(0, 0, -1);
+const N_IMPACT = 12; // シェーダに渡す同時波紋数
+
+const LIQUID_VERT = /* glsl */ `
+  varying vec2 vUv;
+  void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+`;
+const LIQUID_FRAG = /* glsl */ `
+  precision highp float;
+  varying vec2 vUv;
+  uniform sampler2D uGlyph;
+  uniform float uTime, uFill, uOpacity, uWobble, uRimK, uCaustic, uRippleK;
+  uniform vec3 uDeep, uBright, uRim;
+  uniform vec3 uImpacts[${N_IMPACT}];
+
+  float gA(vec2 uv){
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+    return texture2D(uGlyph, uv).a;
+  }
+  void main(){
+    vec2 uv = vUv;
+    float t = uTime;
+
+    vec2 warp = vec2(
+      sin(uv.y*22.0 + t*1.7) + 0.6*sin(uv.x*13.0 - t*1.1),
+      sin(uv.x*18.0 - t*1.3) + 0.6*sin(uv.y*15.0 + t*0.9)
+    ) * 0.006 * uWobble;
+
+    float ripple = 0.0;
+    for (int i = 0; i < ${N_IMPACT}; i++) {
+      vec3 im = uImpacts[i];
+      if (im.z < 0.0) continue;
+      float age = t - im.z;
+      if (age < 0.0 || age > 1.7) continue;
+      float d = distance(uv, im.xy);
+      ripple += sin(d*90.0 - age*26.0) * exp(-age*3.0) * exp(-d*10.0);
+    }
+    warp += ripple * 0.012 * uRippleK;
+
+    float a = gA(uv + warp);
+
+    // 左→右の書き進み。先端に明るい水線。
+    float wipe = smoothstep(uFill, uFill - 0.06, uv.x);
+    float front = exp(-pow((uv.x - uFill) / 0.022, 2.0)) * step(0.5, gA(vec2(clamp(uFill,0.0,1.0), uv.y)) + a);
+    a *= wipe;
+    if (a < 0.02 && front < 0.02) discard;
+
+    // 縁（メニスカス）
+    float inA = gA(uv + warp + vec2(0.012, 0.0)) * gA(uv + warp - vec2(0.012, 0.0));
+    float rim = clamp((a - inA) * 5.0, 0.0, 1.0);
+    rim += smoothstep(0.55, 0.12, a) * step(0.06, a) * 0.7;
+    rim *= uRimK;
+
+    // 内側で動くコースティック
+    float caus = (0.5 + 0.5*sin(uv.x*9.0 + t*1.5 + sin(uv.y*7.0 - t)))
+               * (0.5 + 0.5*sin(uv.y*11.0 - t*1.2));
+
+    vec3 col = mix(uDeep, uBright, clamp(caus*0.6*uCaustic + ripple*2.2*uRippleK, 0.0, 1.0));
+    col += rim * uRim;
+    col += front * uRim * 1.6;
+
+    float alpha = (a * (0.55 + 0.45*rim) + front*0.55) * uOpacity;
+    gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+  }
+`;
 
 export class TitleScreen {
   constructor(scene, ctx) {
@@ -89,40 +151,81 @@ export class TitleScreen {
     this._phase = "SUSPEND";
     this._phaseT = 0;
     this._wasStart = false;
-    this._subReveal = 0;
+    this._built = false;
+    this._vis = 0;
 
-    // ワールド空間（部屋）に置くもの
+    // ワールド空間（部屋）
     this.world = new THREE.Group();
     this.scene.add(this.world);
 
+    // 宙の雨＋フィーダー粒
     const n = CFG.COUNT;
     const geo = new THREE.CylinderGeometry(0.0042, 0.0042, 1, 5, 1, true);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      toneMapped: false
+    const dmat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false
     });
-    this._mesh = new THREE.InstancedMesh(geo, mat, n);
+    this._mesh = new THREE.InstancedMesh(geo, dmat, n);
     this._mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this._mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
     this._mesh.frustumCulled = false;
     this._mesh.renderOrder = 2;
     this.world.add(this._mesh);
 
-    // 足元の波紋（HEARTBEAT）
+    this._nFeed = Math.floor(n * CFG.FEED_FRAC);
+    this._d = new Array(n);
+    for (let i = 0; i < n; i++) {
+      this._d[i] = {
+        role: i < this._nFeed ? "feed" : "room",
+        home: new THREE.Vector3(),
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        frozen: new THREE.Vector3(),
+        tgt: new THREE.Vector3(),
+        tgtU: 0,
+        surf: "t",
+        len: 0.012,
+        bright: 0,
+        absorbed: false,
+        phase: Math.random() * 100,
+        stagger: Math.random(),
+        fallFrom: 1.5 + Math.random() * 3
+      };
+    }
+
+    // 液体の水膜（本物のグリフ形＋液体シェーダ）
+    this._title = this._makeSurface(CFG.TITLE, 132, CFG.TITLE_W, CFG.TITLE_H, CFG.TITLE_Y);
+    this._sub = this._makeSurface(CFG.SUBTITLE, 60, CFG.SUB_W, CFG.SUB_H, CFG.TITLE_Y + CFG.SUB_Y);
+    this.world.add(this._title.mesh, this._sub.mesh);
+
+    // しずく
+    this._drips = [];
+    if (CFG.DRIPS > 0) {
+      const dgeo = new THREE.SphereGeometry(0.012, 8, 6);
+      const dmat2 = new THREE.MeshBasicMaterial({
+        color: CFG.BRIGHT, transparent: true, opacity: 0, depthWrite: false, toneMapped: false
+      });
+      this._dripMesh = new THREE.InstancedMesh(dgeo, dmat2, CFG.DRIPS);
+      this._dripMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this._dripMesh.frustumCulled = false;
+      this._dripMesh.renderOrder = 3;
+      this.world.add(this._dripMesh);
+      for (let i = 0; i < CFG.DRIPS; i++) {
+        this._drips.push({
+          anchor: new THREE.Vector3(),
+          t: Math.random() * 3,
+          period: CFG.DRIP_PERIOD[0] + Math.random() * (CFG.DRIP_PERIOD[1] - CFG.DRIP_PERIOD[0])
+        });
+      }
+    }
+
+    // 波紋
     this._ring = null;
     if (CFG.SHOCKWAVE) {
       this._ring = new THREE.Mesh(
         new THREE.RingGeometry(0.86, 0.94, 64),
         new THREE.MeshBasicMaterial({
-          color: CFG.RAIN_COLOR,
-          transparent: true,
-          opacity: 0,
-          depthWrite: false,
-          side: THREE.DoubleSide,
-          toneMapped: false
+          color: CFG.RAIN_COLOR, transparent: true, opacity: 0, depthWrite: false,
+          side: THREE.DoubleSide, toneMapped: false
         })
       );
       this._ring.rotation.x = -Math.PI / 2;
@@ -130,98 +233,192 @@ export class TitleScreen {
       this.world.add(this._ring);
     }
 
-    // カメラ子（視界追従）: 開始プロンプトの目隠し・「手を動かして」
+    // カメラ子: 開始プロンプトの目隠し・「手を動かして」
     this.hud = new THREE.Group();
     this.camera.add(this.hud);
-
     this._veil = null;
     if (CFG.PROMPT_VEIL) {
       this._veil = new THREE.Mesh(
         new THREE.PlaneGeometry(1.3, 0.72),
         new THREE.MeshBasicMaterial({
-          color: CFG.VEIL_COLOR,
-          transparent: true,
-          opacity: 0,
-          depthWrite: false,
-          depthTest: false,
-          toneMapped: false
+          color: CFG.VEIL_COLOR, transparent: true, opacity: 0, depthWrite: false,
+          depthTest: false, toneMapped: false
         })
       );
       this._veil.position.set(0, -0.02, -1.36);
       this._veil.renderOrder = 10050;
       this.hud.add(this._veil);
     }
+    this._paintPanel = this._makePaintPrompt();
+    if (this._paintPanel) this.hud.add(this._paintPanel.mesh);
 
-    this._paintPanel = null;
-    if (CFG.SHOW_PAINT_PROMPT) {
-      this._paintPanel = createPanel({
-        worldWidth: 0.5,
-        worldHeight: 0.16,
-        pxWidth: 420,
-        pxHeight: 132
-      });
-      this._paintPanel.mesh.position.set(0, -0.32, -0.95);
-      this._paintPanel.mesh.material.opacity = 0;
-      this._paintPanel.draw((c, w, h) => {
-        c.textAlign = "center";
-        c.textBaseline = "middle";
-        c.fillStyle = "#cfe0ff";
-        c.font = "600 56px system-ui, sans-serif";
-        c.fillText("手を動かして", w / 2, h / 2);
-      });
-      this.hud.add(this._paintPanel.mesh);
-    }
-
-    // アンカー（START に入った瞬間のカメラ位置・ヨー）
+    // アンカー
     this._anchor = new THREE.Vector3();
     this._anchorYaw = new THREE.Quaternion();
-
-    // グリフ目標（ワールド座標）
-    this._titleTargets = null; // Float32Array xyz
-    this._subTargets = null;
-
-    // 粒の状態
-    this._d = new Array(n);
-    this._nTitle = Math.floor(n * CFG.TITLE_FRAC);
-    this._nSub = Math.floor(n * CFG.SUB_FRAC);
-    for (let i = 0; i < n; i++) {
-      const role = i < this._nTitle ? "title" : i < this._nTitle + this._nSub ? "sub" : "room";
-      this._d[i] = {
-        role,
-        home: new THREE.Vector3(),
-        pos: new THREE.Vector3(),
-        vel: new THREE.Vector3(),
-        tgt: new THREE.Vector3(),
-        frozen: new THREE.Vector3(),
-        len: 0.012,
-        bright: 0,
-        phase: Math.random() * 100,
-        stagger: Math.random(),
-        fallFrom: 1.5 + Math.random() * 3,
-        drip: false,
-        subU: 0
-      };
-    }
-    for (let i = 0; i < this._nTitle; i++) {
-      this._d[i].drip = CFG.DRIP && Math.random() < CFG.DRIP_FRAC;
-    }
 
     // スクラッチ
     this._dummy = new THREE.Object3D();
     this._c = new THREE.Color();
     this._cRain = new THREE.Color(CFG.RAIN_COLOR);
-    this._cGlyph = new THREE.Color(CFG.GLYPH_COLOR);
     this._cWake = new THREE.Color(CFG.WAKE_COLOR);
     this._v = new THREE.Vector3();
     this._q = new THREE.Quaternion();
     this._hands = [new THREE.Vector3(), new THREE.Vector3()];
     this._handCount = 0;
-
-    this._vis = 0;
-    this._built = false;
+    this._impactHead = { t: 0, s: 0 };
   }
 
-  /** START に入った瞬間、アンカーを取り直して全目標・全ホームを組み直す */
+  _makeSurface(text, fontPx, worldW, worldH, yOffset) {
+    // グリフをキャンバスに（細い画は stroke で太らせる）
+    const W = 1024;
+    const H = Math.max(160, Math.round((worldH / worldW) * W));
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = "#fff";
+    g.strokeStyle = "#fff";
+    g.lineJoin = "round";
+    g.lineWidth = fontPx * 0.16;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.font = `800 ${fontPx}px system-ui, sans-serif`;
+    g.strokeText(text, W / 2, H / 2);
+    g.fillText(text, W / 2, H / 2);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+
+    // 湾曲したプレーン（両端が少しこちらへ）
+    const seg = 40;
+    const pg = new THREE.PlaneGeometry(worldW, worldH, seg, 6);
+    const R = CFG.DIST;
+    const p = pg.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const x0 = p.getX(i);
+      const phi = ((x0 / R) * CFG.WRAP_GAIN);
+      p.setX(i, R * Math.sin(phi));
+      p.setZ(i, -R * Math.cos(phi) + R);
+    }
+    p.needsUpdate = true;
+    pg.computeVertexNormals();
+
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: LIQUID_VERT,
+      fragmentShader: LIQUID_FRAG,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      uniforms: {
+        uGlyph: { value: tex },
+        uTime: { value: 0 },
+        uFill: { value: 0 },
+        uOpacity: { value: 0 },
+        uWobble: { value: CFG.LIQ_WOBBLE },
+        uRimK: { value: CFG.LIQ_RIM },
+        uCaustic: { value: CFG.LIQ_CAUSTIC },
+        uRippleK: { value: CFG.RIPPLE_STRENGTH },
+        uDeep: { value: new THREE.Color(CFG.DEEP) },
+        uBright: { value: new THREE.Color(CFG.BRIGHT) },
+        uRim: { value: new THREE.Color(CFG.RIM) },
+        uImpacts: { value: Array.from({ length: N_IMPACT }, () => new THREE.Vector3(0, 0, -1)) }
+      }
+    });
+    const mesh = new THREE.Mesh(pg, mat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 3;
+
+    // グリフのアルファからサンプル点（フィーダー目標）と下端点（しずく）を作る
+    const data = g.getImageData(0, 0, W, H).data;
+    const pts = [];
+    let minX = W, maxX = 0, minY = H, maxY = 0;
+    const colBottom = new Float32Array(W).fill(-1);
+    for (let y = 0; y < H; y += 3) {
+      for (let x = 0; x < W; x += 3) {
+        if (data[(y * W + x) * 4 + 3] > 120) {
+          pts.push(x, y);
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          if (y > colBottom[x]) colBottom[x] = y;
+        }
+      }
+    }
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+    // シャッフル
+    const m = pts.length / 2;
+    for (let i = m - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      for (let k = 0; k < 2; k++) {
+        const a = i * 2 + k, b = j * 2 + k;
+        const tmp = pts[a]; pts[a] = pts[b]; pts[b] = tmp;
+      }
+    }
+
+    return {
+      mesh,
+      mat,
+      tex,
+      cv,
+      W, H, minX, minY, bw, bh,
+      worldW, worldH, yOffset,
+      hits: pts,
+      colBottom,
+      impacts: mat.uniforms.uImpacts.value,
+      impactHead: 0,
+      fillTarget: 0,
+      fillNow: 0
+    };
+  }
+
+  _makePaintPrompt() {
+    const cv = document.createElement("canvas");
+    cv.width = 420;
+    cv.height = 132;
+    const g = cv.getContext("2d");
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillStyle = "#cfe0ff";
+    g.font = "600 56px system-ui, sans-serif";
+    g.fillText("手を動かして", 210, 66);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.5, 0.16),
+      new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, toneMapped: false
+      })
+    );
+    mesh.position.set(0, -0.32, -0.95);
+    mesh.renderOrder = 10051;
+    return { mesh, tex };
+  }
+
+  /** アンカー基準ローカル(x,y は目線相対 / z は前方が負) → ワールド */
+  _l2w(lx, ly, lz, out) {
+    return out.set(lx, ly, lz).applyQuaternion(this._anchorYaw).add(this._anchor);
+  }
+
+  /** 水膜サーフェスの (col,row) → 湾曲面上のワールド座標。u01 も返す（out に書く, 戻り値=u01） */
+  _surfPointWorld(surf, col, row, out) {
+    const u01 = (col - surf.minX) / surf.bw; // 0..1
+    const v01 = (row - surf.minY) / surf.bh;
+    const R = CFG.DIST;
+    const phi = (((u01 - 0.5) * surf.worldW) / R) * CFG.WRAP_GAIN;
+    const lx = R * Math.sin(phi);
+    const ly = (0.5 - v01) * surf.worldH + surf.yOffset;
+    const lz = -R * Math.cos(phi);
+    this._l2w(lx, ly, lz, out);
+    return u01;
+  }
+
   _build() {
     this.camera.updateWorldMatrix(true, false);
     this.camera.getWorldPosition(this._anchor);
@@ -230,151 +427,95 @@ export class TitleScreen {
     const yaw = Math.atan2(this._v.x, -this._v.z);
     this._anchorYaw.setFromAxisAngle(UP, yaw);
 
-    this._titleTargets = this._sampleGlyph(CFG.TITLE, 120, CFG.GLYPH_W, CFG.GLYPH_H, CFG.HEIGHT, this._nTitle);
-    this._subTargets = this._sampleGlyph(
-      CFG.SUBTITLE,
-      58,
-      CFG.SUB_W,
-      CFG.SUB_H,
-      CFG.HEIGHT + CFG.SUB_DROP_Y,
-      this._nSub
-    );
+    // 水膜メッシュをアンカーに置く（中心が正面 -DIST）
+    for (const s of [this._title, this._sub]) {
+      this._l2w(0, s.yOffset, -CFG.DIST, this._v);
+      s.mesh.position.copy(this._v);
+      s.mesh.quaternion.copy(this._anchorYaw);
+      s.mat.uniforms.uFill.value = 0;
+      s.mat.uniforms.uOpacity.value = 0;
+      s.fillNow = 0;
+      s.fillTarget = 0;
+      s.impactHead = 0;
+      for (const im of s.impacts) im.set(0, 0, -1);
+    }
 
+    // 粒のホーム＆フィーダー目標
     const R = CFG.ROOM;
     for (let i = 0; i < this._d.length; i++) {
       const d = this._d[i];
-      // ホーム（宙吊り位置）= アンカー基準の部屋ボリューム内ランダム（背面も含む）
       const lx = (Math.random() * 2 - 1) * R.x;
-      const lz = -(Math.random() * (R.zFront + R.zBack)) + R.zBack; // -zFront(前) .. +zBack(後)
+      const lz = -(Math.random() * (R.zFront + R.zBack)) + R.zBack;
       const ly = R.yBot + Math.random() * (R.yTop - R.yBot);
-      this._localToWorld(lx, ly, lz, d.home);
+      this._l2w(lx, ly, lz, d.home);
       d.pos.copy(d.home);
-      d.pos.y += d.fallFrom; // 上から降ってくる
+      d.pos.y += d.fallFrom;
       d.vel.set(0, 0, 0);
       d.bright = 0;
       d.len = 0.012;
+      d.absorbed = false;
       d.frozen.copy(d.pos);
 
-      if (d.role === "title") {
-        const k = (i % this._nTitle) % Math.max(1, this._titleTargets.length / 4);
-        d.tgt.set(this._titleTargets[k * 4], this._titleTargets[k * 4 + 1], this._titleTargets[k * 4 + 2]);
-        d.subU = 0;
-      } else if (d.role === "sub") {
-        const cnt = Math.max(1, this._subTargets.length / 4);
-        const k = (i - this._nTitle) % cnt;
-        d.tgt.set(this._subTargets[k * 4], this._subTargets[k * 4 + 1], this._subTargets[k * 4 + 2]);
-        d.subU = this._subTargets[k * 4 + 3];
+      if (d.role === "feed") {
+        const surf = Math.random() < CFG.FEED_TITLE_BIAS ? this._title : this._sub;
+        d.surf = surf === this._title ? "t" : "s";
+        const hi = ((Math.random() * (surf.hits.length / 2)) | 0) * 2;
+        d.tgtU = this._surfPointWorld(surf, surf.hits[hi], surf.hits[hi + 1], d.tgt);
+        d.tgtRow = surf.hits[hi + 1];
+        d.tgtCol = surf.hits[hi];
+        d.stagger = d.tgtU; // 左→右で流れ込む
+      }
+    }
+
+    // しずくの初期アンカー（下端）
+    if (this._drips.length) {
+      for (let k = 0; k < this._drips.length; k++) {
+        const surf = k < this._drips.length * 0.72 ? this._title : this._sub;
+        this._reanchorDrip(this._drips[k], surf);
+        this._drips[k].t = Math.random() * this._drips[k].period;
       }
     }
 
     if (this._ring) this._ring.position.set(this._anchor.x, this._anchor.y - 1.5, this._anchor.z);
     this._phase = "SUSPEND";
     this._phaseT = 0;
-    this._subReveal = 0;
-    this._paintFade = 0.9;
     if (this._veil) this._veil.material.opacity = 0;
     if (this._paintPanel) this._paintPanel.mesh.material.opacity = 0;
     if (this._ring) this._ring.material.opacity = 0;
     this._mesh.material.opacity = 0.9;
     this._built = true;
-
     if (REDUCED_MOTION) this._snapToHold();
   }
 
-  /** アンカー基準ローカル(x,y は目線相対 / z は前方が負) → ワールド */
-  _localToWorld(lx, ly, lz, out) {
-    out.set(lx, ly, lz).applyQuaternion(this._anchorYaw).add(this._anchor);
-    return out;
-  }
-
-  /**
-   * text をオフスクリーンに描き、アルファを格子走査して
-   * 「こちら側へ湾曲した面」（半径 DIST の円弧、中心を正面 -DIST に）上の
-   * ワールド目標点にする。返り値: Float32Array、1点 = [x, y, z, u01]（u01 は左右位置 0..1）。
-   */
-  _sampleGlyph(text, fontPx, worldW, worldH, yOffset, cap) {
-    const W = 900;
-    const H = Math.max(80, Math.round(fontPx * 1.9));
-    const cv = document.createElement("canvas");
-    cv.width = W;
-    cv.height = H;
-    const g = cv.getContext("2d");
-    g.fillStyle = "#fff";
-    g.strokeStyle = "#fff";
-    g.lineJoin = "round";
-    g.lineWidth = fontPx * 0.09; // 細い画（ひらがなの「よ」等）を太らせてから点群化する
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.font = `800 ${fontPx}px system-ui, sans-serif`;
-    g.strokeText(text, W / 2, H / 2);
-    g.fillText(text, W / 2, H / 2);
-    const data = g.getImageData(0, 0, W, H).data;
-
-    const hits = [];
-    let minX = W, maxX = 0, minY = H, maxY = 0;
-    const step = 3;
-    for (let y = 0; y < H; y += step) {
-      for (let x = 0; x < W; x += step) {
-        if (data[(y * W + x) * 4 + 3] > 110) {
-          hits.push(x, y);
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-    if (hits.length === 0) return new Float32Array(0);
-    const bw = Math.max(1, maxX - minX);
-    const bh = Math.max(1, maxY - minY);
-
-    const m = hits.length / 2;
-    for (let i = m - 1; i > 0; i--) {
-      const j = (Math.random() * (i + 1)) | 0;
-      for (let k = 0; k < 2; k++) {
-        const a = i * 2 + k;
-        const b = j * 2 + k;
-        const t = hits[a];
-        hits[a] = hits[b];
-        hits[b] = t;
-      }
-    }
-
-    const keep = Math.min(cap, m);
-    const R = CFG.DIST;
-    const out = new Float32Array(keep * 4);
-    for (let i = 0; i < keep; i++) {
-      const px = hits[i * 2];
-      const py = hits[i * 2 + 1];
-      const u01 = (px - minX) / bw; // 0..1（左→右）
-      const v01 = (py - minY) / bh; // 0..1（上→下）
-      const phi = (((u01 - 0.5) * worldW) / R) * CFG.WRAP_GAIN;
-      const rr = R + (Math.random() * 2 - 1) * CFG.GLASS_JITTER;
-      const lx = rr * Math.sin(phi);
-      const ly = (0.5 - v01) * worldH + yOffset;
-      const lz = -rr * Math.cos(phi); // phi=0 で -DIST、両端は少し手前へ湾曲
-      this._localToWorld(lx, ly, lz, this._v);
-      out[i * 4] = this._v.x;
-      out[i * 4 + 1] = this._v.y;
-      out[i * 4 + 2] = this._v.z;
-      out[i * 4 + 3] = u01;
-    }
-    return out;
+  _reanchorDrip(drip, surf) {
+    // グリフ下端の列からランダムに1点
+    let tries = 0;
+    let col = 0;
+    do {
+      col = (surf.minX + Math.random() * surf.bw) | 0;
+      tries++;
+    } while (surf.colBottom[col] < 0 && tries < 20);
+    const row = surf.colBottom[col] < 0 ? surf.minY + surf.bh : surf.colBottom[col];
+    this._surfPointWorld(surf, col, row, drip.anchor);
+    drip.surf = surf;
   }
 
   _snapToHold() {
     this._phase = "HOLD";
     this._phaseT = 0;
-    this._subReveal = 1;
+    for (const s of [this._title, this._sub]) {
+      s.mat.uniforms.uFill.value = 1;
+      s.fillNow = 1;
+      s.fillTarget = 1;
+      s.mat.uniforms.uOpacity.value = 1;
+    }
     for (const d of this._d) {
-      if (d.role === "room") {
-        d.pos.copy(d.home);
-        d.bright = 0.15;
-        d.len = 0.012;
+      if (d.role === "feed") {
+        d.absorbed = true;
+        d.len = 0;
       } else {
-        d.pos.copy(d.tgt);
-        d.bright = 1;
-        d.len = 0.012;
+        d.pos.copy(d.home);
+        d.bright = 0.12;
       }
     }
     if (this._veil) this._veil.material.opacity = 0;
@@ -390,8 +531,7 @@ export class TitleScreen {
       }
     }
     if (this._handCount === 0) {
-      // フォールバック: 合成した「手」を宙の雨の中で大きく動かす（ハーネス確認用）
-      this._localToWorld(
+      this._l2w(
         0.75 * Math.sin(this._t * 1.3),
         0.35 + 0.7 * Math.sin(this._t * 1.9),
         -1.1 + 0.55 * Math.cos(this._t * 0.9),
@@ -401,9 +541,14 @@ export class TitleScreen {
     }
   }
 
+  _pushImpact(surf, u, v, tNow) {
+    const im = surf.impacts[surf.impactHead % N_IMPACT];
+    im.set(u, v, tNow);
+    surf.impactHead++;
+  }
+
   update(dt, ctx) {
     const isStart = ctx.game?.state === "START";
-
     if (isStart && !this._wasStart) this._build();
     if (!isStart && this._wasStart && this._phase !== "RELEASE" && this._built) {
       this._phase = "RELEASE";
@@ -412,6 +557,7 @@ export class TitleScreen {
     this._wasStart = isStart;
     if (!this._built) {
       this.world.visible = false;
+      this.hud.visible = false;
       return;
     }
 
@@ -428,16 +574,18 @@ export class TitleScreen {
       this._readHands();
       this._advance(dt);
     }
+    this._updateSurfaces(dt);
+    this._updateDrips(dt);
     this._render();
   }
 
   _advance(dt) {
     const P = this._phase;
-    const step = (p) => (p <= 0 ? 0 : p >= 1 ? 1 : p * p * (3 - 2 * p));
+    const sm = (p) => (p <= 0 ? 0 : p >= 1 ? 1 : p * p * (3 - 2 * p));
 
     if (P === "SUSPEND") {
       for (const d of this._d) {
-        const p = step((this._phaseT - d.stagger * (CFG.SUSPEND_SEC * 0.6)) / (CFG.SUSPEND_SEC * 0.4));
+        const p = sm((this._phaseT - d.stagger * (CFG.SUSPEND_SEC * 0.6)) / (CFG.SUSPEND_SEC * 0.4));
         d.pos.set(d.home.x, d.home.y + d.fallFrom * (1 - p), d.home.z);
         d.len = 0.05 + (0.012 - 0.05) * p;
         d.bright = 0.1 + 0.15 * p;
@@ -445,7 +593,7 @@ export class TitleScreen {
       }
       if (this._paintPanel) {
         this._paintPanel.mesh.material.opacity =
-          step((this._phaseT - CFG.SUSPEND_SEC * 0.6) / (CFG.SUSPEND_SEC * 0.4)) * 0.9;
+          sm((this._phaseT - CFG.SUSPEND_SEC * 0.6) / (CFG.SUSPEND_SEC * 0.4)) * 0.9;
       }
       if (this._veil) this._veil.material.opacity = 0.5 * this._vis;
       if (this._phaseT >= CFG.SUSPEND_SEC) {
@@ -457,68 +605,72 @@ export class TitleScreen {
       for (const d of this._d) this._shiver(d, 1);
       if (this._veil) this._veil.material.opacity = 0.5 * this._vis;
       if (this._phaseT >= CFG.PAINT_SEC) {
+        for (const d of this._d) d.frozen.copy(d.pos);
+        this._paintFade = this._paintPanel ? this._paintPanel.mesh.material.opacity : 0;
         this._phase = "CONDENSE";
         this._phaseT = 0;
-        for (const d of this._d) d.frozen.copy(d.pos);
-        if (this._paintPanel) this._paintFade = this._paintPanel.mesh.material.opacity;
       }
     } else if (P === "CONDENSE") {
-      let done = true;
+      let feedersDone = true;
       for (const d of this._d) {
         if (d.role === "room") {
           this._shiver(d, 1);
           d.bright = Math.max(0.12, d.bright - dt * 0.3);
           continue;
         }
-        const raw = (this._phaseT - d.stagger * CFG.CONDENSE_STAGGER) / CFG.CONDENSE_SEC;
-        const k = raw <= 0 ? 0 : raw >= 1 ? 1 : raw;
-        if (k < 1) done = false;
-        if (d.role === "sub" && d.subU > this._subReveal) {
-          d.bright = 0;
+        if (d.absorbed) {
           d.len = 0;
           continue;
         }
-        const e = easeOutBack(k);
-        const s = step(k);
-        const f = d.frozen || d.home;
+        const raw = (this._phaseT - d.stagger * (CFG.CONDENSE_SEC * 0.8)) / (CFG.CONDENSE_SEC * 0.35);
+        const k = raw <= 0 ? 0 : raw >= 1 ? 1 : raw;
+        if (k < 1) feedersDone = false;
+        const e = easeIn(k);
         d.pos.set(
-          f.x + (d.tgt.x - f.x) * e,
-          f.y + (d.tgt.y - f.y) * e,
-          f.z + (d.tgt.z - f.z) * s
+          d.frozen.x + (d.tgt.x - d.frozen.x) * e,
+          d.frozen.y + (d.tgt.y - d.frozen.y) * e,
+          d.frozen.z + (d.tgt.z - d.frozen.z) * e
         );
-        d.len = 0.05 + (0.012 - 0.05) * s;
-        d.bright = d.role === "sub" ? 0.85 * s : s;
+        d.len = 0.05 + (0.02 - 0.05) * k;
+        d.bright = 0.5 + 0.9 * k;
+        if (k >= 1) {
+          d.absorbed = true;
+          d.len = 0;
+          const surf = d.surf === "t" ? this._title : this._sub;
+          const v01 = (d.tgtRow - surf.minY) / surf.bh;
+          this._pushImpact(surf, d.tgtU, v01, this._t);
+          surf.fillTarget = Math.max(surf.fillTarget, d.tgtU);
+        }
       }
-      this._subReveal = Math.min(1, this._phaseT / CFG.SUB_REVEAL_SEC);
+      // 時間床（フィーダーが遅れても満ちきる）
+      const floor = Math.min(1, this._phaseT / CFG.CONDENSE_SEC);
+      this._title.fillTarget = Math.min(1, Math.max(this._title.fillTarget, floor));
+      this._sub.fillTarget = Math.min(1, Math.max(this._sub.fillTarget, floor));
+      for (const s of [this._title, this._sub]) s.mat.uniforms.uOpacity.value = this._vis;
       if (this._paintPanel) {
-        this._paintPanel.mesh.material.opacity =
-          (this._paintFade ?? 0.9) * (1 - step(this._phaseT / 0.5));
+        this._paintPanel.mesh.material.opacity = (this._paintFade ?? 0.9) * (1 - sm(this._phaseT / 0.5));
       }
       if (this._veil) {
-        this._veil.material.opacity = 0.5 * (1 - step(this._phaseT / (CFG.CONDENSE_SEC * 0.7))) * this._vis;
+        this._veil.material.opacity = 0.5 * (1 - sm(this._phaseT / (CFG.CONDENSE_SEC * 0.6))) * this._vis;
       }
-      if (done && this._subReveal >= 1) {
+      if (feedersDone && this._title.fillNow > 0.98 && this._sub.fillNow > 0.98) {
         this._phase = "HEARTBEAT";
         this._phaseT = 0;
         if (this._ring) {
           this._ring.material.opacity = 0.55;
           this._ring.scale.setScalar(0.2);
         }
-        for (const d of this._d) {
-          if (d.role === "room") d.vel.set(0, -CFG.REAL_SPEED, 0);
-        }
+        for (const d of this._d) if (d.role === "room") d.vel.set(0, -CFG.REAL_SPEED, 0);
       }
     } else if (P === "HEARTBEAT") {
       for (const d of this._d) {
-        if (d.role === "room") {
-          d.pos.addScaledVector(d.vel, dt);
-          d.len = 0.42;
-          d.bright = 0.7;
-          if (d.pos.y < this._anchor.y + CFG.ROOM.yBot) {
-            // 抜けたら再び宙吊りへ（新しいホーム）
-            d.pos.y = this._anchor.y + CFG.ROOM.yTop;
-            d.home.copy(d.pos);
-          }
+        if (d.role !== "room") continue;
+        d.pos.addScaledVector(d.vel, dt);
+        d.len = 0.42;
+        d.bright = 0.7;
+        if (d.pos.y < this._anchor.y + CFG.ROOM.yBot) {
+          d.pos.y = this._anchor.y + CFG.ROOM.yTop;
+          d.home.copy(d.pos);
         }
       }
       if (this._ring) {
@@ -526,6 +678,7 @@ export class TitleScreen {
         this._ring.scale.setScalar(0.2 + p * 4.2);
         this._ring.material.opacity = 0.55 * (1 - p) * this._vis;
       }
+      for (const s of [this._title, this._sub]) s.mat.uniforms.uOpacity.value = this._vis;
       if (this._phaseT >= CFG.HEARTBEAT_SEC) {
         for (const d of this._d) {
           if (d.role === "room") {
@@ -541,30 +694,38 @@ export class TitleScreen {
     } else if (P === "HOLD") {
       if (this._veil) this._veil.material.opacity = 0;
       if (this._ring) this._ring.material.opacity = 0;
+      for (const s of [this._title, this._sub]) {
+        s.fillTarget = 1;
+        s.mat.uniforms.uOpacity.value = this._vis;
+      }
       for (const d of this._d) {
         if (d.role === "room") {
           this._shiver(d, 1);
           d.bright = 0.12 + 0.03 * Math.sin(this._t * 0.7 + d.phase);
         } else {
-          d.pos.copy(d.tgt);
-          if (d.drip) {
-            const pp = ((this._t + d.phase) % CFG.DRIP_PERIOD) / CFG.DRIP_PERIOD;
-            d.pos.y -= CFG.DRIP_AMOUNT * dripCurve(pp);
-          }
-          d.bright = 0.82 + 0.18 * Math.sin(this._t * 3 + d.phase * 5);
+          d.len = 0;
         }
       }
     } else if (P === "RELEASE") {
       for (const d of this._d) {
+        if (d.absorbed) {
+          // 水膜からほどけて落ちる
+          d.absorbed = false;
+          d.pos.copy(d.tgt);
+        }
         if (d.vel.lengthSq() === 0) {
-          d.vel.set((Math.random() * 2 - 1) * 0.4, -1.1 - Math.random() * 1.2, (Math.random() * 2 - 1) * 0.3);
+          d.vel.set((Math.random() * 2 - 1) * 0.4, -1.1 - Math.random() * 1.4, (Math.random() * 2 - 1) * 0.3);
         }
         d.pos.addScaledVector(d.vel, dt);
-        d.len = Math.min(0.3, d.len + dt * 0.8);
+        d.len = Math.min(0.3, Math.max(d.len, 0.02) + dt * 0.8);
         d.bright = Math.max(0, d.bright - dt / CFG.RELEASE_SEC);
       }
       const p = Math.min(1, this._phaseT / CFG.RELEASE_SEC);
       this._mesh.material.opacity = 0.9 * (1 - p);
+      for (const s of [this._title, this._sub]) {
+        s.fillTarget = 1 - p; // 右→左に引く
+        s.mat.uniforms.uOpacity.value = (1 - p) * this._vis;
+      }
       this._vis = 1 - p;
       if (p >= 1) {
         this._built = false;
@@ -572,6 +733,55 @@ export class TitleScreen {
         for (const d of this._d) d.vel.set(0, 0, 0);
       }
     }
+  }
+
+  _updateSurfaces(dt) {
+    for (const s of [this._title, this._sub]) {
+      s.fillNow = THREE.MathUtils.damp(s.fillNow, s.fillTarget, 6, dt);
+      s.mat.uniforms.uFill.value = s.fillNow;
+      s.mat.uniforms.uTime.value = this._t;
+    }
+  }
+
+  _updateDrips(dt) {
+    if (!this._drips.length) return;
+    const dm = this._dummy;
+    dm.quaternion.identity();
+    const active = this._phase === "HOLD" || this._phase === "CONDENSE";
+    let anyVisible = false;
+    for (let i = 0; i < this._drips.length; i++) {
+      const dr = this._drips[i];
+      dr.t += dt;
+      if (dr.t > dr.period) {
+        dr.t = 0;
+        dr.period = CFG.DRIP_PERIOD[0] + Math.random() * (CFG.DRIP_PERIOD[1] - CFG.DRIP_PERIOD[0]);
+        this._reanchorDrip(dr, dr.surf || this._title);
+      }
+      // 0..1: たまって → 伸びて → 落ちて → 消える
+      const p = dr.t / dr.period;
+      let yoff = 0;
+      let scale = 0;
+      let op = 0;
+      if (active && p > 0.35) {
+        const q = (p - 0.35) / 0.65; // 0..1
+        yoff = -CFG.DRIP_FALL * (q * q);
+        scale = 1;
+        op = q < 0.15 ? q / 0.15 : 1 - (q - 0.15) / 0.85;
+      }
+      dm.position.copy(dr.anchor);
+      dm.position.y += yoff;
+      dm.scale.set(scale, scale * (1 + Math.min(2, -yoff * 12)), scale);
+      dm.updateMatrix();
+      this._dripMesh.setMatrixAt(i, dm.matrix);
+      if (op > 0.01) anyVisible = true;
+      dr._op = op;
+    }
+    // まとめて不透明度（インスタンスごとの色は使わずマテリアル単一）
+    let avg = 0;
+    for (const dr of this._drips) avg += dr._op || 0;
+    this._dripMesh.material.opacity = active ? (avg / this._drips.length) * 0.9 * this._vis : 0;
+    this._dripMesh.instanceMatrix.needsUpdate = true;
+    this._dripMesh.visible = anyVisible && active;
   }
 
   _shiver(d, amt) {
@@ -613,22 +823,17 @@ export class TitleScreen {
     for (let i = 0; i < this._d.length; i++) {
       const d = this._d[i];
       if (d.len <= 0.003) {
-        dm.position.set(0, -9999, 0); // 未表示（未書きの副題粒など）
+        dm.position.set(0, -9999, 0);
         dm.scale.set(0, 0, 0);
       } else {
         dm.position.copy(d.pos);
-        const fat = d.role === "sub" ? CFG.SUB_FAT : 1;
-        dm.scale.set(fat, d.len, fat);
+        dm.scale.set(1, d.len, 1);
       }
       dm.updateMatrix();
       this._mesh.setMatrixAt(i, dm.matrix);
-      // 色: rain -> glyph（明るさで）＋ wake（1超で白へ）
       const b = d.bright;
-      if (b > 1) {
-        this._c.copy(this._cGlyph).lerp(this._cWake, Math.min(1, b - 1));
-      } else {
-        this._c.copy(this._cRain).lerp(this._cGlyph, Math.max(0, b));
-      }
+      if (b > 1) this._c.copy(this._cWake);
+      else this._c.copy(this._cRain).lerp(this._cWake, Math.max(0, b));
       this._mesh.setColorAt(i, this._c);
     }
     this._mesh.instanceMatrix.needsUpdate = true;
@@ -643,6 +848,15 @@ export class TitleScreen {
     this.camera.remove(this.hud);
     this._mesh.geometry.dispose();
     this._mesh.material.dispose();
+    for (const s of [this._title, this._sub]) {
+      s.mesh.geometry.dispose();
+      s.mat.dispose();
+      s.tex.dispose();
+    }
+    if (this._dripMesh) {
+      this._dripMesh.geometry.dispose();
+      this._dripMesh.material.dispose();
+    }
     if (this._ring) {
       this._ring.geometry.dispose();
       this._ring.material.dispose();
@@ -651,19 +865,14 @@ export class TitleScreen {
       this._veil.geometry.dispose();
       this._veil.material.dispose();
     }
-    if (this._paintPanel) this._paintPanel.dispose();
+    if (this._paintPanel) {
+      this._paintPanel.mesh.geometry.dispose();
+      this._paintPanel.mesh.material.dispose();
+      this._paintPanel.tex.dispose();
+    }
   }
 }
 
-function easeOutBack(x) {
-  if (x <= 0) return 0;
-  if (x >= 1) return 1;
-  const c1 = 1.3;
-  const c3 = c1 + 1;
-  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
-}
-/** 0..1: すばやく1へ（垂れる）→ ゆっくり0へ（戻る） */
-function dripCurve(p) {
-  const s = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
-  return p < 0.18 ? s(p / 0.18) : 1 - s((p - 0.18) / 0.82);
+function easeIn(x) {
+  return x <= 0 ? 0 : x >= 1 ? 1 : x * x * x;
 }
