@@ -32,13 +32,29 @@ const HEAD_FORWARD_FIX = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.PI
 // 実機で見た目が変わるので、まだ不自然な場合は角度・軸を再調整すること。
 const HAND_ROTATION_FIX = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 
+// 脚は実トラッキングデータを持たない（PICO純正Motion Trackerとの連携は、
+// スタンドアロン機は同時に1つのXRセッションしか持てないという制約により
+// 「プレイ中にリアルタイム連携する」用途では実現不可能と判明。GAMESPEC 6.2参照）。
+// 代わりに、頭の動き（上下＝しゃがみ量、水平方向の速さ）から脚をそれっぽく
+// プロシージャルに動かし、「全身が動いている」印象を作る。
+const LEG_STANCE_X = 0.11; // m。腰から見た左右の足の開き幅
+const REST_LEG_DROP = TARGET_HEIGHT * 0.47; // m。直立時の腰→足首の高さ（身長の約47%で近似）
+const HIP_REST_DECAY = 0.6; // m/s。「直立していたときの腰の高さ」の推定値が下がっていく速さ
+const WALK_SPEED_MIN = 0.15; // m/s。これ未満の水平移動速度では足踏みさせない
+const WALK_SPEED_MAX = 1.0; // m/s。この速度で足踏みの大きさが最大になる
+const WALK_LIFT_MAX = 0.09; // m。足踏み時の最大の足上げ高さ
+const WALK_STEP_MAX = 0.10; // m。足踏み時の前後の踏み出し幅
+const WALK_GAIT_FREQ = 7.5; // rad/s相当。速度1のときの歩行サイクルの速さ
+const SPEED_SMOOTH_RATE = 8; // 水平速度の指数平滑化係数（大きいほど追従が速い）
+
 /**
  * リプレイ時だけ表示する人型アバター（Quaternius製glTFモデル、ユーザー提供）。
  * 記録データ（ctx.replayer.frame.head / handLeft / handRight）から、
  * 頭にモデル全体を追従させ、両腕はTwo-Bone IKで手の位置・向きに合わせる。
- * 脚は、PICO Motion Tracker連携（frame.legs、MotionTrackerBridge経由で記録された
- * 場合のみ）があればTwo-Bone IKで動かす。連携がなければ従来通りバインドポーズ固定
- * （GAMESPEC 6.2）。
+ * 脚は実トラッキングデータを持たないため、頭の動き（しゃがみ量・水平移動速度）から
+ * Two-Bone IKでプロシージャルに動かす（GAMESPEC 6.2）。PICO純正Motion Trackerとの
+ * 連携は、スタンドアロン機が同時に1つのXRセッションしか持てない制約により
+ * 「プレイ中のリアルタイム連携」としては実現不可能と判明したため採用していない。
  */
 export class PlayerAvatar {
   constructor(scene, ctx) {
@@ -61,7 +77,6 @@ export class PlayerAvatar {
     this._handPos = new THREE.Vector3();
     this._handQuat = new THREE.Quaternion();
     this._rootPos = new THREE.Vector3();
-    this._ikTarget = new THREE.Vector3();
     this._jointPos = new THREE.Vector3();
     this._toTarget = new THREE.Vector3();
     this._bendDir = new THREE.Vector3();
@@ -76,9 +91,16 @@ export class PlayerAvatar {
     this._fullHeadQuat = new THREE.Quaternion();
     this._restTarget = new THREE.Vector3();
     this._legAnkleTarget = new THREE.Vector3();
-    this._legKneeHint = new THREE.Vector3();
     this._legRootPos = new THREE.Vector3();
-    this._legYawQuat = new THREE.Quaternion();
+    this._legStanceOffset = new THREE.Vector3();
+    this._legStepOffset = new THREE.Vector3();
+
+    // 疑似足アニメーション用の状態（フレームをまたいで持ち越す）
+    this._restHipY = null; // 「直立していたときの腰の高さ」の推定値（世界座標）
+    this._prevHeadX = null;
+    this._prevHeadZ = null;
+    this._smoothSpeed = 0; // 頭の水平移動速度（平滑化済み、m/s）
+    this._gaitPhase = 0; // 足踏みアニメの位相
 
     const loader = new GLTFLoader();
     loader.load(
@@ -290,7 +312,7 @@ export class PlayerAvatar {
     bone.quaternion.copy(parentWorldQuat.invert().multiply(this._tmpQuat2));
   }
 
-  update(_dt, ctx) {
+  update(dt, ctx) {
     if (!this._ready) return;
 
     const active = ctx.game?.state === "REPLAY";
@@ -299,6 +321,9 @@ export class PlayerAvatar {
 
     if (!head) {
       this.group.visible = false;
+      this._restHipY = null; // 次にリプレイが始まったとき最初の高さから再計測する
+      this._prevHeadX = null;
+      this._prevHeadZ = null;
       return;
     }
     this.group.visible = true;
@@ -353,36 +378,63 @@ export class PlayerAvatar {
       }
     }
 
-    // 脚：PICO Motion Tracker連携（frame.legs、MotionTrackerBridge経由で記録されている
-    // 場合のみ）で動かす。連携がなければバインドポーズのまま（GAMESPEC 6.2）。
-    if (this._legsAvailable && frame.legs) {
-      // トラッカーのデータは「腰(Hips)からの相対オフセット、体の正面基準のローカル座標」
-      // （x:右 / y:上 / z:後方、-zが前方＝WebXRの頭・手の姿勢と同じ規約）で送られてくる
-      // 想定。Unity側とWebXR側で絶対座標系の原点が一致する保証がないため、絶対位置ではなく
-      // 頭のヨー（_euler.y、HEAD_FORWARD_FIXを含まない生の値）だけを使ってワールド座標に変換する。
-      this._legYawQuat.setFromAxisAngle(Y_AXIS, this._euler.y);
+    // 脚：実トラッキングデータが無いため、頭の動きから足をそれっぽく（プロシージャルに）
+    // 動かす。しゃがむと膝が曲がり、横に動くと足踏みしているように見える、という
+    // 「全身が動いている」印象作りが目的（GAMESPEC 6.2）。
+    if (this._legsAvailable) {
+      // 両脚共通のHipsボーンから、まず腰のワールド位置を1回だけ取得する。
+      const hipPos = this._legs.left.root.getWorldPosition(this._legRootPos);
+
+      // 「直立していたときの腰の高さ」を推定する：腰の高さの直近の最大値を、
+      // ゆっくり下がっていく上限値として保持する（HIP_REST_DECAY m/s）。
+      // しゃがんで腰が下がった直後は「さっきまで立っていた高さ」を少しの間覚えているため
+      // 膝が曲がって見え、しゃがんだ状態が続くとその高さに向かって基準もゆっくり下がってくる。
+      if (this._restHipY === null) this._restHipY = hipPos.y;
+      this._restHipY = Math.max(hipPos.y, this._restHipY - HIP_REST_DECAY * dt);
+      const ankleY = this._restHipY - REST_LEG_DROP;
+
+      // 頭の水平移動速度（平滑化済み）を「歩いている速さ」の近似として使う。
+      if (this._prevHeadX !== null && dt > 0) {
+        const dx = head.x - this._prevHeadX;
+        const dz = head.z - this._prevHeadZ;
+        const rawSpeed = Math.sqrt(dx * dx + dz * dz) / dt;
+        const speedEase = Math.min(1, dt * SPEED_SMOOTH_RATE);
+        this._smoothSpeed += (rawSpeed - this._smoothSpeed) * speedEase;
+      }
+      this._prevHeadX = head.x;
+      this._prevHeadZ = head.z;
+
+      const walkT = THREE.MathUtils.clamp(
+        (this._smoothSpeed - WALK_SPEED_MIN) / (WALK_SPEED_MAX - WALK_SPEED_MIN),
+        0,
+        1
+      );
+      this._gaitPhase += dt * WALK_GAIT_FREQ * walkT;
+
+      // 体の右方向（左右の足の開き幅に使う）。_forwardWorldはHEAD_FORWARD_FIX適用前の
+      // 生のヨーなので、右方向もそれに揃える（腕IKのpole計算と同じ基準）。
+      const rightWorldX = -this._forwardWorld.z;
+      const rightWorldZ = this._forwardWorld.x;
 
       for (const side of ["left", "right"]) {
         const leg = this._legs[side];
-        const legData = side === "left" ? frame.legs.left : frame.legs.right;
-        if (!legData?.ankle) continue;
+        const sign = side === "left" ? -1 : 1;
+        const phaseOffset = side === "left" ? 0 : Math.PI;
 
-        const rootPos = leg.root.getWorldPosition(this._legRootPos);
+        // 左右交互に足を上げ下げ・前後に踏み出す（片方が上がっている間は反対側は接地）
+        const lift = Math.max(0, Math.sin(this._gaitPhase + phaseOffset)) * WALK_LIFT_MAX * walkT;
+        const step = Math.cos(this._gaitPhase + phaseOffset) * WALK_STEP_MAX * walkT;
+
+        this._legStanceOffset.set(rightWorldX * LEG_STANCE_X * sign, 0, rightWorldZ * LEG_STANCE_X * sign);
+        this._legStepOffset.copy(this._forwardWorld).multiplyScalar(step);
+
         this._legAnkleTarget
-          .set(legData.ankle.x, legData.ankle.y, legData.ankle.z)
-          .applyQuaternion(this._legYawQuat)
-          .add(rootPos);
+          .copy(hipPos)
+          .add(this._legStanceOffset)
+          .add(this._legStepOffset);
+        this._legAnkleTarget.y = ankleY + lift;
 
-        let kneeHint = null;
-        if (legData.knee) {
-          this._legKneeHint
-            .set(legData.knee.x, legData.knee.y, legData.knee.z)
-            .applyQuaternion(this._legYawQuat)
-            .add(rootPos);
-          kneeHint = this._legKneeHint;
-        }
-
-        this._solveLeg(leg, this._legAnkleTarget, kneeHint);
+        this._solveLeg(leg, this._legAnkleTarget, null);
       }
     }
   }
