@@ -14,9 +14,9 @@ import { Replayer } from "./core/Replayer.js";
 import { MotionTrackerBridge } from "./core/MotionTrackerBridge.js";
 import { createPresentation } from "./presentation/index.js";
 
-// ゲームモード。既定は原モード（よける：頭・手とも被弾）。
-// ?mode=swat のときだけ「殴り飛ばしモード」：手は被弾せず雨を弾き飛ばす（頭のみ被弾）。
-const SWAT_MODE = new URLSearchParams(window.location.search).get("mode") === "swat";
+// ゲームモードの初期値。既定は原モード（よける：頭・手とも被弾）。
+// ?mode=swat で「殴り飛ばしモード」開始。以降は START 画面の左トリガーで切替（ctx.swatMode）。
+const SWAT_MODE_INITIAL = new URLSearchParams(window.location.search).get("mode") === "swat";
 
 const container = document.getElementById("app");
 
@@ -115,7 +115,7 @@ const ctx = {
   rainPhysics,
   replayer: null,
   controllers,
-  swatMode: SWAT_MODE
+  swatMode: SWAT_MODE_INITIAL // START画面の左トリガーで切り替わる
 };
 
 game.on("stateChange", (state) => {
@@ -151,14 +151,16 @@ renderer.setAnimationLoop((time) => {
       const handLeft = poseFromController(controllerByHandedness("left"));
       const handRight = poseFromController(controllerByHandedness("right"));
 
+      // モードは START 画面の左トリガーで切り替わるので毎フレーム ctx から読む。
+      const swatMode = ctx.swatMode;
       // 原モード：頭・手とも被弾。殴り飛ばしモード：手は被弾させず（null 渡し）、頭のみ。
-      const hits = SWAT_MODE
+      const hits = swatMode
         ? playerCollider.findHits(head, null, null, rainPhysics.positions)
         : playerCollider.findHits(head, handLeft, handRight, rainPhysics.positions);
       for (const hit of hits) game.registerHit(hit);
 
       // 殴り飛ばしモードのみ：手が捉えた雨粒を弾き飛ばし、swat イベントで演出/音/振動へ。
-      const swats = SWAT_MODE
+      const swats = swatMode
         ? playerCollider.findSwats(handLeft, handRight, rainPhysics.positions)
         : [];
       const swatEvents = swats.map((s) => ({
