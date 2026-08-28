@@ -35,8 +35,11 @@ export class Recorder {
    * livesRemaining: このフレーム時点の GameManager.lives（HUD復元用）
    * wind: このフレーム時点の RainPhysics.windX/windZ（{ x, z }）。
    *   リプレイ中に雨のストリークの傾きを再現するために記録する。
+   * legs: このフレーム時点の MotionTrackerBridge.getLatest()（{ left, right } または null）。
+   *   PICO Motion Tracker未接続なら常にnull。ブリッジが毎回まるごと新しいオブジェクトを
+   *   返す実装のため（既存のものを書き換えない）、参照をそのまま保持しても安全。
    */
-  record(dt, head, handLeft, handRight, rainPositions, hits = [], livesRemaining = null, wind = null) {
+  record(dt, head, handLeft, handRight, rainPositions, hits = [], livesRemaining = null, wind = null, legs = null) {
     if (!this._recording) return;
 
     this._elapsed += dt;
@@ -49,7 +52,8 @@ export class Recorder {
       hits,
       livesRemaining,
       windX: wind?.x ?? 0,
-      windZ: wind?.z ?? 0
+      windZ: wind?.z ?? 0,
+      legs
     });
   }
 

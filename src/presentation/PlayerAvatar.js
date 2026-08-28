@@ -12,6 +12,13 @@ const ARM_BONES = {
   right: { shoulder: "ShoulderR", upper: "UpperArmR", lower: "LowerArmR", palm: "PalmR" }
 };
 
+// 脚（PICO Motion Tracker連携時のみ動く。トラッカー未接続時はバインドポーズ固定）。
+// 左右とも根本のボーンはHips（共有）。
+const LEG_BONES = {
+  left: { hip: "Hips", upper: "UpperLegL", lower: "LowerLegL", foot: "FootL" },
+  right: { hip: "Hips", upper: "UpperLegR", lower: "LowerLegR", foot: "FootR" }
+};
+
 const ONE = new THREE.Vector3(1, 1, 1);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -29,7 +36,9 @@ const HAND_ROTATION_FIX = new THREE.Quaternion().setFromEuler(new THREE.Euler(-M
  * リプレイ時だけ表示する人型アバター（Quaternius製glTFモデル、ユーザー提供）。
  * 記録データ（ctx.replayer.frame.head / handLeft / handRight）から、
  * 頭にモデル全体を追従させ、両腕はTwo-Bone IKで手の位置・向きに合わせる。
- * 脚はバインドポーズ固定（GAMESPEC 6.2：足のトラッキングは行わない）。
+ * 脚は、PICO Motion Tracker連携（frame.legs、MotionTrackerBridge経由で記録された
+ * 場合のみ）があればTwo-Bone IKで動かす。連携がなければ従来通りバインドポーズ固定
+ * （GAMESPEC 6.2）。
  */
 export class PlayerAvatar {
   constructor(scene, ctx) {
@@ -41,6 +50,7 @@ export class PlayerAvatar {
     this._ready = false;
     this._bones = {};
     this._arms = {}; // left/right -> { upperLen, lowerLen, upperAxis, lowerAxis }
+    this._legs = {}; // left/right -> { upperLen, lowerLen, upperAxis, lowerAxis }（Hip共有）
 
     // 作業用の一時オブジェクト（毎フレームのnewを避ける）
     this._headPos = new THREE.Vector3();
@@ -50,8 +60,9 @@ export class PlayerAvatar {
     this._throwawayScale = new THREE.Vector3();
     this._handPos = new THREE.Vector3();
     this._handQuat = new THREE.Quaternion();
-    this._shoulderPos = new THREE.Vector3();
-    this._elbowPos = new THREE.Vector3();
+    this._rootPos = new THREE.Vector3();
+    this._ikTarget = new THREE.Vector3();
+    this._jointPos = new THREE.Vector3();
     this._toTarget = new THREE.Vector3();
     this._bendDir = new THREE.Vector3();
     this._poleVec = new THREE.Vector3();
@@ -64,6 +75,10 @@ export class PlayerAvatar {
     this._bodyYawQuat = new THREE.Quaternion();
     this._fullHeadQuat = new THREE.Quaternion();
     this._restTarget = new THREE.Vector3();
+    this._legAnkleTarget = new THREE.Vector3();
+    this._legKneeHint = new THREE.Vector3();
+    this._legRootPos = new THREE.Vector3();
+    this._legYawQuat = new THREE.Quaternion();
 
     const loader = new GLTFLoader();
     loader.load(
@@ -86,18 +101,34 @@ export class PlayerAvatar {
 
     this.group.add(model);
 
-    const boneNames = ["Head", "Neck", ...Object.values(ARM_BONES).flatMap((b) => Object.values(b))];
+    // 脚のボーンは無くても（腕・頭が動く）本体機能に影響させたくないので、
+    // 必須ボーン一覧とは別に集める（missingでも早期returnしない）。
+    const legBoneNames = [...Object.values(LEG_BONES).flatMap((b) => Object.values(b))];
+    const boneNames = [
+      "Head",
+      "Neck",
+      ...Object.values(ARM_BONES).flatMap((b) => Object.values(b)),
+      ...legBoneNames
+    ];
     model.traverse((obj) => {
       if (boneNames.includes(obj.name)) {
         this._bones[obj.name] = obj;
       }
     });
 
-    const missing = boneNames.filter((n) => !this._bones[n]);
+    const requiredBoneNames = ["Head", "Neck", ...Object.values(ARM_BONES).flatMap((b) => Object.values(b))];
+    const missing = requiredBoneNames.filter((n) => !this._bones[n]);
     if (missing.length > 0) {
       console.warn(`[PlayerAvatar] モデルにボーンが見つかりません: ${missing.join(", ")}`);
       return;
     }
+    const missingLegBones = legBoneNames.filter((n) => !this._bones[n]);
+    if (missingLegBones.length > 0) {
+      console.warn(
+        `[PlayerAvatar] 脚のボーンが見つかりません（脚IKは無効化されます）: ${missingLegBones.join(", ")}`
+      );
+    }
+    this._legsAvailable = missingLegBones.length === 0;
 
     // groupがidentity transformの今のうちに、バインドポーズの情報を確定させる。
     this.group.updateWorldMatrix(true, true);
@@ -129,7 +160,7 @@ export class PlayerAvatar {
       const palmPos = palm.getWorldPosition(new THREE.Vector3());
 
       this._arms[side] = {
-        shoulder,
+        root: shoulder,
         upper,
         lower,
         palm,
@@ -138,6 +169,31 @@ export class PlayerAvatar {
         upperAxis: this._localAxis(upper, upperPos, lowerPos),
         lowerAxis: this._localAxis(lower, lowerPos, palmPos)
       };
+    }
+
+    // 両脚: 腕と同様。脚のボーンが揃っている場合のみ（_legsAvailable）。
+    if (this._legsAvailable) {
+      for (const side of ["left", "right"]) {
+        const names = LEG_BONES[side];
+        const hip = this._bones[names.hip];
+        const upper = this._bones[names.upper];
+        const lower = this._bones[names.lower];
+        const foot = this._bones[names.foot];
+
+        const upperPos = upper.getWorldPosition(new THREE.Vector3());
+        const lowerPos = lower.getWorldPosition(new THREE.Vector3());
+        const footPos = foot.getWorldPosition(new THREE.Vector3());
+
+        this._legs[side] = {
+          root: hip,
+          upper,
+          lower,
+          upperLen: upperPos.distanceTo(lowerPos),
+          lowerLen: lowerPos.distanceTo(footPos),
+          upperAxis: this._localAxis(upper, upperPos, lowerPos),
+          lowerAxis: this._localAxis(lower, lowerPos, footPos)
+        };
+      }
     }
 
     this._ready = true;
@@ -159,40 +215,72 @@ export class PlayerAvatar {
   }
 
   /**
-   * 肩→ターゲットの2ボーンIK。UpperArm/LowerArmのローカル回転を直接設定する。
-   * poleTarget方向へ肘が曲がるように解く（余弦定理ベースの標準的な2ボーンIK）。
+   * root→ターゲットの2ボーンIK（腕・脚共通）。upper/lowerのローカル回転を直接設定する。
+   * bendDir方向へ中間関節（肘/膝）が曲がるように解く（余弦定理ベースの標準的な2ボーンIK）。
+   * bendDirは正規化済みで、axis（root→target方向）の成分は呼び出し側で除去しておくこと。
    */
-  _solveArm(arm, target) {
-    const shoulderPos = arm.shoulder.getWorldPosition(this._shoulderPos);
+  _solveTwoBoneIK(limb, rootPos, target, axis, dist, bendDir) {
+    // 余弦定理でrootからの投影距離aと、軸から中間関節までの垂直距離hを求める
+    const a = (limb.upperLen * limb.upperLen - limb.lowerLen * limb.lowerLen + dist * dist) / (2 * dist);
+    const h = Math.sqrt(Math.max(0, limb.upperLen * limb.upperLen - a * a));
 
-    this._toTarget.subVectors(target, shoulderPos);
-    let dist = this._toTarget.length();
-    const maxLen = arm.upperLen + arm.lowerLen - 1e-4;
-    const minLen = Math.abs(arm.upperLen - arm.lowerLen) + 1e-4;
+    this._jointPos.copy(rootPos).addScaledVector(axis, a).addScaledVector(bendDir, h);
+
+    const upperWorldDir = this._tmpVecA.subVectors(this._jointPos, rootPos).normalize();
+    const lowerWorldDir = this._tmpVecB.subVectors(target, this._jointPos).normalize();
+
+    this._applyBoneDirection(limb.upper, limb.upperAxis, upperWorldDir);
+    this._applyBoneDirection(limb.lower, limb.lowerAxis, lowerWorldDir);
+
+    return this._jointPos;
+  }
+
+  /** rootPos→targetの軸・クランプ済み距離を求める共通処理。axisOutに正規化済み方向を書き込み、距離を返す。 */
+  _axisAndClampedDist(limb, rootPos, target, axisOut) {
+    axisOut.subVectors(target, rootPos);
+    let dist = axisOut.length();
+    const maxLen = limb.upperLen + limb.lowerLen - 1e-4;
+    const minLen = Math.abs(limb.upperLen - limb.lowerLen) + 1e-4;
     dist = THREE.MathUtils.clamp(dist, minLen, maxLen);
-    const axis = this._toTarget.normalize(); // 肩→ターゲット方向（正規化済み）
+    axisOut.normalize();
+    return dist;
+  }
 
-    // pole方向：体の前方かつやや下（腕は基本的に体の前で曲がる、という近似。要実機調整）
+  /** 肩→ターゲット。pole方向は体の前方かつやや下（腕は基本的に体の前で曲がる、という近似）。 */
+  _solveArm(arm, target) {
+    const rootPos = arm.root.getWorldPosition(this._rootPos);
+    const dist = this._axisAndClampedDist(arm, rootPos, target, this._toTarget);
+    const axis = this._toTarget;
+
     this._poleVec.copy(this._forwardWorld).multiplyScalar(0.6);
     this._poleVec.y -= 0.5;
     this._poleVec.addScaledVector(axis, -this._poleVec.dot(axis)); // axis成分を除去
     if (this._poleVec.lengthSq() < 1e-6) this._poleVec.set(1, -0.3, 0.3);
     this._poleVec.normalize();
-    this._bendDir.copy(this._poleVec);
 
-    // 余弦定理で肩からの投影距離aと、軸から肘までの垂直距離hを求める
-    const a = (arm.upperLen * arm.upperLen - arm.lowerLen * arm.lowerLen + dist * dist) / (2 * dist);
-    const h = Math.sqrt(Math.max(0, arm.upperLen * arm.upperLen - a * a));
+    return this._solveTwoBoneIK(arm, rootPos, target, axis, dist, this._poleVec);
+  }
 
-    this._elbowPos.copy(shoulderPos).addScaledVector(axis, a).addScaledVector(this._bendDir, h);
+  /**
+   * 腰→ターゲット。pole方向（膝の曲がる向き）はkneeHint（トラッカーの膝相対位置、
+   * ワールド座標）があればそれを使い、無ければ「体の前方かつやや下」の近似にフォールバックする。
+   */
+  _solveLeg(leg, target, kneeHint) {
+    const rootPos = leg.root.getWorldPosition(this._rootPos);
+    const dist = this._axisAndClampedDist(leg, rootPos, target, this._toTarget);
+    const axis = this._toTarget;
 
-    const upperWorldDir = this._tmpVecA.subVectors(this._elbowPos, shoulderPos).normalize();
-    const lowerWorldDir = this._tmpVecB.subVectors(target, this._elbowPos).normalize();
+    if (kneeHint) {
+      this._poleVec.subVectors(kneeHint, rootPos);
+    } else {
+      this._poleVec.copy(this._forwardWorld).multiplyScalar(0.5);
+      this._poleVec.y -= 0.5;
+    }
+    this._poleVec.addScaledVector(axis, -this._poleVec.dot(axis)); // axis成分を除去
+    if (this._poleVec.lengthSq() < 1e-6) this._poleVec.set(0, -0.3, 1);
+    this._poleVec.normalize();
 
-    this._applyBoneDirection(arm.upper, arm.upperAxis, upperWorldDir);
-    this._applyBoneDirection(arm.lower, arm.lowerAxis, lowerWorldDir);
-
-    return this._elbowPos;
+    return this._solveTwoBoneIK(leg, rootPos, target, axis, dist, this._poleVec);
   }
 
   /** ボーンのローカル軸(axisLocal)が、指定したワールド方向(dirWorld)を向くようローカル回転を設定する */
@@ -251,7 +339,7 @@ export class PlayerAvatar {
       } else {
         // 未トラッキング時は肩の下に自然に手を下げる。
         // _tmpVecA/_tmpVecBは_solveArm内部で書き換えられるため、targetには専用の変数を使う。
-        target = arm.shoulder.getWorldPosition(this._restTarget);
+        target = arm.root.getWorldPosition(this._restTarget);
         target.y -= ARM_REST_DROP;
       }
 
@@ -262,6 +350,39 @@ export class PlayerAvatar {
         handQuat.multiply(HAND_ROTATION_FIX);
         const lowerWorldQuat = arm.lower.getWorldQuaternion(this._tmpQuat);
         arm.palm.quaternion.copy(lowerWorldQuat.invert().multiply(handQuat));
+      }
+    }
+
+    // 脚：PICO Motion Tracker連携（frame.legs、MotionTrackerBridge経由で記録されている
+    // 場合のみ）で動かす。連携がなければバインドポーズのまま（GAMESPEC 6.2）。
+    if (this._legsAvailable && frame.legs) {
+      // トラッカーのデータは「腰(Hips)からの相対オフセット、体の正面基準のローカル座標」
+      // （x:右 / y:上 / z:後方、-zが前方＝WebXRの頭・手の姿勢と同じ規約）で送られてくる
+      // 想定。Unity側とWebXR側で絶対座標系の原点が一致する保証がないため、絶対位置ではなく
+      // 頭のヨー（_euler.y、HEAD_FORWARD_FIXを含まない生の値）だけを使ってワールド座標に変換する。
+      this._legYawQuat.setFromAxisAngle(Y_AXIS, this._euler.y);
+
+      for (const side of ["left", "right"]) {
+        const leg = this._legs[side];
+        const legData = side === "left" ? frame.legs.left : frame.legs.right;
+        if (!legData?.ankle) continue;
+
+        const rootPos = leg.root.getWorldPosition(this._legRootPos);
+        this._legAnkleTarget
+          .set(legData.ankle.x, legData.ankle.y, legData.ankle.z)
+          .applyQuaternion(this._legYawQuat)
+          .add(rootPos);
+
+        let kneeHint = null;
+        if (legData.knee) {
+          this._legKneeHint
+            .set(legData.knee.x, legData.knee.y, legData.knee.z)
+            .applyQuaternion(this._legYawQuat)
+            .add(rootPos);
+          kneeHint = this._legKneeHint;
+        }
+
+        this._solveLeg(leg, this._legAnkleTarget, kneeHint);
       }
     }
   }

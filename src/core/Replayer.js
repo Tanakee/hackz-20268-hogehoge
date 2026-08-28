@@ -31,6 +31,25 @@ function lerpFloatArray(a, b, t) {
   return out;
 }
 
+function lerpVec3(a, b, t) {
+  return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) };
+}
+
+function lerpLegSide(a, b, t) {
+  if (!a || !b) return a || b || null;
+  return {
+    ankle: a.ankle && b.ankle ? lerpVec3(a.ankle, b.ankle, t) : a.ankle || b.ankle || null,
+    knee: a.knee && b.knee ? lerpVec3(a.knee, b.knee, t) : a.knee || b.knee || null
+  };
+}
+
+// PICO Motion Tracker連携（未接続なら常にnull）。片方のフレームにしかデータが
+// なければ補間できないので、そのまま無い方を採用する（nullなら脚はバインドポーズ）。
+function lerpLegs(a, b, t) {
+  if (!a || !b) return a || b || null;
+  return { left: lerpLegSide(a.left, b.left, t), right: lerpLegSide(a.right, b.right, t) };
+}
+
 function buildFrame({
   gameTime,
   replayElapsed,
@@ -41,7 +60,8 @@ function buildFrame({
   hits,
   livesRemaining,
   windX,
-  windZ
+  windZ,
+  legs
 }) {
   return {
     gameTime,                                          // 元のプレイ中の経過秒数（補間済み）
@@ -54,7 +74,8 @@ function buildFrame({
     rainPositions,
     hits,
     windX: windX ?? 0,                                    // 雨のストリークの傾き再現用
-    windZ: windZ ?? 0
+    windZ: windZ ?? 0,
+    legs: legs ?? null                                    // PICO Motion Tracker連携（PlayerAvatarの脚IK用）
   };
 }
 
@@ -111,7 +132,8 @@ export class Replayer {
       hits: recorded.hits ?? [],
       livesRemaining: recorded.livesRemaining,
       windX: recorded.windX,
-      windZ: recorded.windZ
+      windZ: recorded.windZ,
+      legs: recorded.legs
     });
   }
 
@@ -152,7 +174,8 @@ export class Replayer {
         hits: passedHits.length ? passedHits : current.hits ?? [],
         livesRemaining: current.livesRemaining,
         windX: current.windX,
-        windZ: current.windZ
+        windZ: current.windZ,
+        legs: current.legs
       });
       this._finished = true;
       this.game?.finishReplay();
@@ -172,7 +195,8 @@ export class Replayer {
       hits: passedHits,
       livesRemaining: current.livesRemaining,
       windX: lerp(current.windX, next.windX, t),
-      windZ: lerp(current.windZ, next.windZ, t)
+      windZ: lerp(current.windZ, next.windZ, t),
+      legs: lerpLegs(current.legs, next.legs, t)
     });
   }
 }

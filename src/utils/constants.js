@@ -49,3 +49,8 @@ export const RAIN_DROP_RADIUS = 0.0045; // m
 export const GAME_DURATION = 30;        // 秒
 export const PLAYER_LIVES = 3;          // 被弾許容回数
 export const READY_DURATION = 3;        // 秒（START後の準備カウントダウン。この間は雨もタイマーも動かない）
+
+// PICO Motion Tracker（足首トラッカー）連携用。同一端末上で動く別プロジェクトの
+// ネイティブ補助アプリ（Unity + PICO Integration SDK）が配信するローカルWebSocket。
+// 未起動・未接続でもゲームは通常通り動く（詳細はMotionTrackerBridge.js参照）。
+export const MOTION_TRACKER_WS_URL = "ws://127.0.0.1:8787";

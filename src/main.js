@@ -11,6 +11,7 @@ import { RainPhysics } from "./core/RainPhysics.js";
 import { PlayerCollider } from "./core/PlayerCollider.js";
 import { Recorder } from "./core/Recorder.js";
 import { Replayer } from "./core/Replayer.js";
+import { MotionTrackerBridge } from "./core/MotionTrackerBridge.js";
 import { createPresentation } from "./presentation/index.js";
 
 const container = document.getElementById("app");
@@ -100,6 +101,8 @@ const game = new GameManager();
 const rainPhysics = new RainPhysics();
 const playerCollider = new PlayerCollider();
 const recorder = new Recorder();
+// PICO Motion Tracker連携（未起動・未接続でもゲームは通常通り動く。MotionTrackerBridge.js参照）
+const motionTracker = new MotionTrackerBridge();
 
 const ctx = {
   renderer,
@@ -146,10 +149,17 @@ renderer.setAnimationLoop((time) => {
       const hits = playerCollider.findHits(head, handLeft, handRight, rainPhysics.positions);
       for (const hit of hits) game.registerHit(hit);
 
-      recorder.record(dt, head, handLeft, handRight, rainPhysics.positions, hits, game.lives, {
-        x: rainPhysics.windX,
-        z: rainPhysics.windZ
-      });
+      recorder.record(
+        dt,
+        head,
+        handLeft,
+        handRight,
+        rainPhysics.positions,
+        hits,
+        game.lives,
+        { x: rainPhysics.windX, z: rainPhysics.windZ },
+        motionTracker.getLatest()
+      );
 
       // 被弾した雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に
       // 何フレームも重なり続けて多段ヒット（1回のニアミスでライフ全損）してしまう。
