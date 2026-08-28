@@ -1,0 +1,20 @@
+# 改行コードをリポジトリ全体で LF に固定する。
+# これで各自の git の core.autocrlf 設定に関係なく、チェックアウトもコミットも
+# 常に LF になる（Windows で core.autocrlf=true でも CRLF にならない）。
+* text=auto eol=lf
+
+# バイナリ資産は正規化対象から除外
+*.glb   binary
+*.gltf  binary
+*.mp3   binary
+*.wav   binary
+*.ogg   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary

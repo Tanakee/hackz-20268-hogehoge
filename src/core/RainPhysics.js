@@ -27,7 +27,18 @@ export class RainPhysics {
     // RAIN_MODE_TRANSITION秒かけてなめらかに変化する（風が強まる/収まるイメージ）。
     this.windX = 0; // m/s
     this.windZ = 0;
+    // 実際の天気から得た風（presentation の WeatherWind）。未設定なら従来のランダム風。
+    this._windSource = null;
     this._resetAll();
+  }
+
+  /**
+   * 実際の天気から得た風を斜めモードに反映するためのフック。
+   * src = { ok:boolean, azimuthRad:number, tiltRad:number }。中身は非同期で書き換わるので毎回読む。
+   * 未設定 or ok=false のときは従来どおりランダム方向＋固定傾き（RAIN_TILT_ANGLE_DEG）で動く。
+   */
+  setWindSource(src) {
+    this._windSource = src;
   }
 
   /** 指定した雨粒を強制的に再出現させる。被弾した雨粒をその場に留まらせない（多段ヒット防止）ために公開。 */
@@ -91,8 +102,18 @@ export class RainPhysics {
   }
 
   _pickWindTarget() {
-    const dir = Math.random() * Math.PI * 2;
-    const horizontalSpeed = this.speed * Math.tan(TILT_ANGLE_RAD);
+    const src = this._windSource;
+    let dir;
+    let horizontalSpeed;
+    if (src && src.ok) {
+      // 実際の天気：風向はそのまま、傾き角は実風速から決めた値（tiltRad）を使う。
+      dir = src.azimuthRad;
+      horizontalSpeed = this.speed * Math.tan(src.tiltRad);
+    } else {
+      // 従来どおり：ランダムな向き＋固定傾き。
+      dir = Math.random() * Math.PI * 2;
+      horizontalSpeed = this.speed * Math.tan(TILT_ANGLE_RAD);
+    }
     this._targetWindX = Math.cos(dir) * horizontalSpeed;
     this._targetWindZ = Math.sin(dir) * horizontalSpeed;
   }
