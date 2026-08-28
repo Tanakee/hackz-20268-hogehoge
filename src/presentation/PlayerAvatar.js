@@ -39,7 +39,6 @@ const HAND_ROTATION_FIX = new THREE.Quaternion().setFromEuler(new THREE.Euler(-M
 // プロシージャルに動かし、「全身が動いている」印象を作る。
 const LEG_STANCE_X = 0.11; // m。腰から見た左右の足の開き幅
 const REST_LEG_DROP = TARGET_HEIGHT * 0.47; // m。直立時の腰→足首の高さ（身長の約47%で近似）
-const HIP_REST_DECAY = 0.6; // m/s。「直立していたときの腰の高さ」の推定値が下がっていく速さ
 const WALK_SPEED_MIN = 0.15; // m/s。これ未満の水平移動速度では足踏みさせない
 const WALK_SPEED_MAX = 1.0; // m/s。この速度で足踏みの大きさが最大になる
 const WALK_LIFT_MAX = 0.09; // m。足踏み時の最大の足上げ高さ
@@ -151,6 +150,7 @@ export class PlayerAvatar {
       );
     }
     this._legsAvailable = missingLegBones.length === 0;
+    console.info(`[PlayerAvatar] legsAvailable=${this._legsAvailable}`);
 
     // groupがidentity transformの今のうちに、バインドポーズの情報を確定させる。
     this.group.updateWorldMatrix(true, true);
@@ -386,11 +386,13 @@ export class PlayerAvatar {
       const hipPos = this._legs.left.root.getWorldPosition(this._legRootPos);
 
       // 「直立していたときの腰の高さ」を推定する：腰の高さの直近の最大値を、
-      // ゆっくり下がっていく上限値として保持する（HIP_REST_DECAY m/s）。
-      // しゃがんで腰が下がった直後は「さっきまで立っていた高さ」を少しの間覚えているため
-      // 膝が曲がって見え、しゃがんだ状態が続くとその高さに向かって基準もゆっくり下がってくる。
-      if (this._restHipY === null) this._restHipY = hipPos.y;
-      this._restHipY = Math.max(hipPos.y, this._restHipY - HIP_REST_DECAY * dt);
+      // 下がらない上限値として保持する（このリプレイ内では減衰させない）。
+      // 足首の目標の高さ（ankleY）はこの最大値から一定量を引いた、ワールド座標で
+      // ほぼ固定の値にする。しゃがんで腰が下がっても足首の目標は動かないままなので、
+      // しゃがんでいる間ずっと膝が曲がって見える（しゃがみをやめて腰が最大値付近まで
+      // 戻ると自然に伸びる）。もし減衰させてしまうと、しゃがみを数秒キープしただけで
+      // 基準ごと下がってきて膝が伸びきってしまう（実機フィードバックで発覚した不具合）。
+      if (this._restHipY === null || hipPos.y > this._restHipY) this._restHipY = hipPos.y;
       const ankleY = this._restHipY - REST_LEG_DROP;
 
       // 頭の水平移動速度（平滑化済み）を「歩いている速さ」の近似として使う。
