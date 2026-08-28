@@ -29,6 +29,7 @@ export class SoundManager {
     this._rainRateTarget = 1;
     this._rainRate = 1;
     this._lastReplayHitGameTime = null;
+    this._lastReplaySwatGameTime = null;
 
     const loader = new THREE.AudioLoader();
     for (const name of ["rain", "hit", "clear", "gameover"]) {
@@ -60,6 +61,7 @@ export class SoundManager {
           this._rainTarget = REPLAY_RAIN_VOLUME;
           this._rainRateTarget = REPLAY_RAIN_RATE;
           this._lastReplayHitGameTime = null;
+          this._lastReplaySwatGameTime = null;
         } else {
           this._rainTarget = state === "PLAYING" ? RAIN_VOLUME : 0;
           this._rainRateTarget = 1;
@@ -96,6 +98,10 @@ export class SoundManager {
       if (frame?.hits?.length && frame.gameTime !== this._lastReplayHitGameTime) {
         this._lastReplayHitGameTime = frame.gameTime;
         this._oneShot("hit", 0.9);
+      }
+      if (frame?.swats?.length && frame.gameTime !== this._lastReplaySwatGameTime) {
+        this._lastReplaySwatGameTime = frame.gameTime;
+        this._oneShot("hit", 0.4, 1.8);
       }
     }
 

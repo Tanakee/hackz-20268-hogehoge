@@ -152,9 +152,14 @@ renderer.setAnimationLoop((time) => {
 
       // 手は雨粒を「殴り飛ばす」側。当たった粒は即再出現させ、swat イベントで演出/音/振動へ。
       const swats = playerCollider.findSwats(handLeft, handRight, rainPhysics.positions);
-      for (const s of swats) {
-        game.emit("swat", { rainIndex: s.rainIndex, part: s.part, x: s.pos.x, y: s.pos.y, z: s.pos.z });
-      }
+      const swatEvents = swats.map((s) => ({
+        rainIndex: s.rainIndex,
+        part: s.part,
+        x: s.pos.x,
+        y: s.pos.y,
+        z: s.pos.z
+      }));
+      for (const e of swatEvents) game.emit("swat", e);
 
       recorder.record(
         dt,
@@ -165,7 +170,8 @@ renderer.setAnimationLoop((time) => {
         hits,
         game.lives,
         { x: rainPhysics.windX, z: rainPhysics.windZ },
-        motionTracker.getLatest()
+        motionTracker.getLatest(),
+        swatEvents
       );
 
       // 被弾/殴り飛ばした雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に

@@ -44,6 +44,7 @@ export class SwatEffect {
     this._slots = Array.from({ length: CFG.POOL }, () => ({ t: 0, x: 0, y: 0, z: 0, active: false }));
     this._next = 0;
 
+    this._lastReplaySwatGameTime = null;
     this._off = ctx.game.on("swat", (p) => this._burst(p));
   }
 
@@ -60,7 +61,18 @@ export class SwatEffect {
     }
   }
 
-  update(dt) {
+  update(dt, ctx) {
+    // リプレイ中は記録された swat のタイミング・位置でもバーストを出す
+    if (ctx?.game?.state === "REPLAY") {
+      const frame = ctx.replayer?.frame;
+      if (frame?.swats?.length && frame.gameTime !== this._lastReplaySwatGameTime) {
+        this._lastReplaySwatGameTime = frame.gameTime;
+        for (const s of frame.swats) this._burst(s);
+      }
+    } else {
+      this._lastReplaySwatGameTime = null;
+    }
+
     let anyActive = false;
     for (let i = 0; i < CFG.POOL; i++) {
       const s = this._slots[i];

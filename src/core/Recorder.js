@@ -38,8 +38,21 @@ export class Recorder {
    * legs: このフレーム時点の MotionTrackerBridge.getLatest()（{ left, right } または null）。
    *   PICO Motion Tracker未接続なら常にnull。ブリッジが毎回まるごと新しいオブジェクトを
    *   返す実装のため（既存のものを書き換えない）、参照をそのまま保持しても安全。
+   * swats: このフレームで PlayerCollider.findSwats() が返した配列（空配列可）。
+   *   殴り飛ばした演出をリプレイでも再生するため、被弾(hits)と同じ形で記録する。
    */
-  record(dt, head, handLeft, handRight, rainPositions, hits = [], livesRemaining = null, wind = null, legs = null) {
+  record(
+    dt,
+    head,
+    handLeft,
+    handRight,
+    rainPositions,
+    hits = [],
+    livesRemaining = null,
+    wind = null,
+    legs = null,
+    swats = []
+  ) {
     if (!this._recording) return;
 
     this._elapsed += dt;
@@ -53,7 +66,8 @@ export class Recorder {
       livesRemaining,
       windX: wind?.x ?? 0,
       windZ: wind?.z ?? 0,
-      legs
+      legs,
+      swats
     });
   }
 
