@@ -31,7 +31,18 @@ function lerpFloatArray(a, b, t) {
   return out;
 }
 
-function buildFrame({ gameTime, replayElapsed, head, handLeft, handRight, rainPositions, hits, livesRemaining }) {
+function buildFrame({
+  gameTime,
+  replayElapsed,
+  head,
+  handLeft,
+  handRight,
+  rainPositions,
+  hits,
+  livesRemaining,
+  windX,
+  windZ
+}) {
   return {
     gameTime,                                          // 元のプレイ中の経過秒数（補間済み）
     replayElapsed,                                      // リプレイ自体の経過秒数（倍速後）
@@ -41,7 +52,9 @@ function buildFrame({ gameTime, replayElapsed, head, handLeft, handRight, rainPo
     handLeft,
     handRight,
     rainPositions,
-    hits
+    hits,
+    windX: windX ?? 0,                                    // 雨のストリークの傾き再現用
+    windZ: windZ ?? 0
   };
 }
 
@@ -96,7 +109,9 @@ export class Replayer {
       handRight: recorded.handRight,
       rainPositions: recorded.rainPositions,
       hits: recorded.hits ?? [],
-      livesRemaining: recorded.livesRemaining
+      livesRemaining: recorded.livesRemaining,
+      windX: recorded.windX,
+      windZ: recorded.windZ
     });
   }
 
@@ -135,7 +150,9 @@ export class Replayer {
         handRight: current.handRight,
         rainPositions: current.rainPositions,
         hits: passedHits.length ? passedHits : current.hits ?? [],
-        livesRemaining: current.livesRemaining
+        livesRemaining: current.livesRemaining,
+        windX: current.windX,
+        windZ: current.windZ
       });
       this._finished = true;
       this.game?.finishReplay();
@@ -153,7 +170,9 @@ export class Replayer {
       handRight: lerpPose(current.handRight, next.handRight, t),
       rainPositions: lerpFloatArray(current.rainPositions, next.rainPositions, t),
       hits: passedHits,
-      livesRemaining: current.livesRemaining
+      livesRemaining: current.livesRemaining,
+      windX: lerp(current.windX, next.windX, t),
+      windZ: lerp(current.windZ, next.windZ, t)
     });
   }
 }

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { RAIN_COUNT, REPLAY_MULTIPLIER, RAIN_DROP_RADIUS } from "../utils/constants.js";
+import { RAIN_COUNT_MAX, REPLAY_MULTIPLIER, RAIN_DROP_RADIUS } from "../utils/constants.js";
 
 // 雨粒1本の見た目（細い縦ストリーク）。y方向にスケールを掛けて速さを表現する。
 // 半径はcore（PlayerCollider）の当たり判定半径と共有し、見た目と判定を一致させる。
@@ -19,12 +19,13 @@ const IDENTITY_QUAT = new THREE.Quaternion();
  * PLAYING/CLEAR/GAMEOVER中、rainPhysics.windX/windZ が非ゼロならストリークの
  * 向きもその方向へ傾ける（tiltedフラグではなく実際の風速を見る。風速はcore側で
  * なめらかに遷移するため、傾きもそれに追従して滑らかに変化する）。
- * リプレイ中の傾き再現は今回のスコープ外（常に垂直で表示する）。
+ * リプレイ中は記録された風速（Replayer.frame.windX/windZ）を使って同様に傾ける
+ * （プレイ中に斜めモードだった場面は、リプレイでも斜めに見えるようにする）。
  */
 export class RainRenderer {
   constructor(scene, ctx) {
     this.scene = scene;
-    this.count = RAIN_COUNT;
+    this.count = RAIN_COUNT_MAX;
 
     const geometry = new THREE.CylinderGeometry(
       STREAK_RADIUS,
@@ -78,11 +79,14 @@ export class RainRenderer {
     const available = Math.min(this.count, Math.floor(positions.length / 3));
 
     const rain = ctx.rainPhysics;
-    const windX = rain?.windX ?? 0;
-    const windZ = rain?.windZ ?? 0;
-    const isTilted = state !== "REPLAY" && (windX * windX + windZ * windZ) > 1e-6;
+    const wind =
+      state === "REPLAY"
+        ? { x: ctx.replayer?.frame?.windX ?? 0, z: ctx.replayer?.frame?.windZ ?? 0 }
+        : { x: rain?.windX ?? 0, z: rain?.windZ ?? 0 };
+    const isTilted = wind.x * wind.x + wind.z * wind.z > 1e-6;
     if (isTilted) {
-      this._tiltDir.set(windX, -rain.speed, windZ).normalize();
+      // rain.speed（RAIN_SPEED_SLOW）はリプレイ中も一定なので、傾き角の再現にそのまま使える。
+      this._tiltDir.set(wind.x, -(rain?.speed ?? 1), wind.z).normalize();
       this._tiltQuat.setFromUnitVectors(UP_VECTOR, this._tiltDir);
     }
 

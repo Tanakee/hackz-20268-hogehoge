@@ -269,9 +269,11 @@ export class TitleScreen {
   }
 
   _makeSurface(text, fontPx, worldW, worldH, yOffset) {
-    // グリフをキャンバスに（細い画は stroke で太らせる）
+    // グリフをキャンバスに（細い画は stroke で太らせる）。
+    // strokeが太すぎる(旧: fontPx*0.16)＋canvas解像度が低いと、画数の多い文字や
+    // 隣接する文字同士が潰れて繋がって見えるため、太らせを弱め解像度も上げる。
     const W = 1024;
-    const H = Math.max(160, Math.round((worldH / worldW) * W));
+    const H = Math.max(224, Math.round((worldH / worldW) * W));
     const cv = document.createElement("canvas");
     cv.width = W;
     cv.height = H;
@@ -280,10 +282,10 @@ export class TitleScreen {
     g.fillStyle = "#fff";
     g.strokeStyle = "#fff";
     g.lineJoin = "round";
-    g.lineWidth = fontPx * 0.16;
+    g.lineWidth = fontPx * 0.06;
     g.textAlign = "center";
     g.textBaseline = "middle";
-    g.font = `800 ${fontPx}px system-ui, sans-serif`;
+    g.font = `700 ${fontPx}px system-ui, sans-serif`;
     g.strokeText(text, W / 2, H / 2);
     g.fillText(text, W / 2, H / 2);
 
@@ -503,6 +505,7 @@ export class TitleScreen {
   _snapToHold() {
     this._phase = "HOLD";
     this._phaseT = 0;
+    this._calm = 1; // 最初から落ち着いた（揺れなし）状態で表示する
     for (const s of [this._title, this._sub]) {
       s.mat.uniforms.uFill.value = 1;
       s.fillNow = 1;
@@ -736,10 +739,26 @@ export class TitleScreen {
   }
 
   _updateSurfaces(dt) {
+    // HOLD中（「トリガーで開始」を読ませたいタイミング）は、うねり・波紋・コースティックの
+    // 揺れが常時フル稼働したままで文字がゆらゆら歪み続け、ほぼ読めなくなっていたため、
+    // HOLDに入ったら数秒かけて演出を落ち着かせる。他のフェーズでは従来通りの派手な演出のまま。
+    const calmTarget = this._phase === "HOLD" ? 1 : 0;
+    this._calm = THREE.MathUtils.damp(this._calm ?? 0, calmTarget, 2, dt);
+    // HOLD中は縁光(rim)がまだ4割残る設定だと輪郭がぼやけて文字が潰れて見えたため、
+    // 可読性を優先してHOLD中はほぼ完全に静止（縁光・うねり・色ムラをゼロ近くまで）させる。
+    const wobble = CFG.LIQ_WOBBLE * (1 - this._calm * 0.98);
+    const rimK = CFG.LIQ_RIM * (1 - this._calm * 0.95);
+    const caustic = CFG.LIQ_CAUSTIC * (1 - this._calm * 0.98);
+    const rippleK = CFG.RIPPLE_STRENGTH * (1 - this._calm * 0.98);
+
     for (const s of [this._title, this._sub]) {
       s.fillNow = THREE.MathUtils.damp(s.fillNow, s.fillTarget, 6, dt);
       s.mat.uniforms.uFill.value = s.fillNow;
       s.mat.uniforms.uTime.value = this._t;
+      s.mat.uniforms.uWobble.value = wobble;
+      s.mat.uniforms.uRimK.value = rimK;
+      s.mat.uniforms.uCaustic.value = caustic;
+      s.mat.uniforms.uRippleK.value = rippleK;
     }
   }
 

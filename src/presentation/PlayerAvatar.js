@@ -19,6 +19,12 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 // （ローカル-Z）と180度反転していた（実機確認：体ごと後ろ向きになる）ため補正する。
 const HEAD_FORWARD_FIX = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.PI);
 
+// コントローラーのgrip姿勢の軸（-Z:前方 / Y:上）とPalmボーンのバインド軸の基準が
+// 一致していないため、そのまま割り当てると手のひらが不自然な向き（前方を向く等）に
+// なる（実機確認）。ローカルX軸で-90度回し、下向きに補正する第一候補。
+// 実機で見た目が変わるので、まだ不自然な場合は角度・軸を再調整すること。
+const HAND_ROTATION_FIX = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+
 /**
  * リプレイ時だけ表示する人型アバター（Quaternius製glTFモデル、ユーザー提供）。
  * 記録データ（ctx.replayer.frame.head / handLeft / handRight）から、
@@ -253,6 +259,7 @@ export class PlayerAvatar {
 
       const handQuat = hand ? this._toQuat(rawHand, this._handQuat) : null;
       if (handQuat) {
+        handQuat.multiply(HAND_ROTATION_FIX);
         const lowerWorldQuat = arm.lower.getWorldQuaternion(this._tmpQuat);
         arm.palm.quaternion.copy(lowerWorldQuat.invert().multiply(handQuat));
       }

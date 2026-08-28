@@ -182,7 +182,7 @@ main
 
 ### Phase 4：調整・仕上げ
 
-- [ ] 実機で難易度調整（`RAIN_COUNT`・`RAIN_SPEED_SLOW`・`GAME_DURATION`）
+- [ ] 実機で難易度調整（`RAIN_COUNT_MIN`／`RAIN_COUNT_MAX`・`RAIN_SPEED_SLOW`・`GAME_DURATION`）
 - [ ] パフォーマンス確認（雨粒150本で90fps維持できるか）
 - [ ] リプレイ体験の確認（「本物の雨を避けていた」驚きが伝わるか）
 - [ ] Vercelデプロイ・発表用URL確定
@@ -204,10 +204,11 @@ main
 export const RAIN_SPEED_SLOW = 1.1;     // m/s（ゲーム中の見かけの雨速。実機調整で1.5→1.1）
 export const RAIN_SPEED_REAL = 7.0;     // m/s（現実の雨速・リプレイ後の速度）
 export const REPLAY_MULTIPLIER = RAIN_SPEED_REAL / RAIN_SPEED_SLOW; // ≒ 6.36倍
-export const RAIN_COUNT = 60;           // 同時に存在する雨粒数（難易度調整の主要パラメータ。実機調整で150→60）
+export const RAIN_COUNT_MIN = 60;       // 個（開始時の雨粒数。実機調整で150→60）
+export const RAIN_COUNT_MAX = 130;      // 個（GAME_DURATIONかけて増える終盤の上限。2乗カーブで終盤に集中）
 export const RAIN_SPAWN_RADIUS = 1.5;   // m（xz平面の出現半径。実機調整で1.2→1.5）
 export const RAIN_SPAWN_HEIGHT = 3.0;   // m（雨の出現上限の高さ。実機調整で2.2→3.0）
-export const RAIN_GROUND_Y = 0;         // m（この高さまで落ちたら再出現）
+export const RAIN_GROUND_Y = -1.0;      // m（この高さまで落ちたら再出現。詳細はGAMESPEC.md 6.3参照）
 export const RAIN_RAMP_UP_DURATION = 2.5; // 秒（PLAYING開始時、この時間をかけて雨粒を上限まで少しずつ投入）
 export const RAIN_MODE_DURATION = 10;   // 秒（垂直/斜めモードを切り替えるサイクル）
 export const RAIN_MODE_TRANSITION = 2.5; // 秒（切り替え時、風速がなめらかに変化する時間）

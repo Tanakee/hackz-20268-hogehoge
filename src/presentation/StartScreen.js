@@ -60,7 +60,12 @@ export class StartScreen {
     };
     this._offs = [
       ctx.game.on("clear", () => capture("clear")),
-      ctx.game.on("gameover", () => capture("gameover"))
+      ctx.game.on("gameover", () => capture("gameover")),
+      // restart() で RESULT → START に戻った後もイントロ画面に切り替わるよう、
+      // 直前の結果表示をクリアする（クリアしないと sig が変化せず結果画面のまま固定される）。
+      ctx.game.on("stateChange", (state) => {
+        if (state === "START") this._result = null;
+      })
     ];
   }
 
