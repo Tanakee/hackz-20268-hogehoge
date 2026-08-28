@@ -101,6 +101,27 @@ export class PlayerAvatar {
     this._smoothSpeed = 0; // 頭の水平移動速度（平滑化済み、m/s）
     this._gaitPhase = 0; // 足踏みアニメの位相
 
+    // --- 一時デバッグ表示：脚IKが実際に動いているか確認するため ---
+    this._dbgCanvas = document.createElement("canvas");
+    this._dbgCanvas.width = 900;
+    this._dbgCanvas.height = 160;
+    this._dbgCtx = this._dbgCanvas.getContext("2d");
+    this._dbgTexture = new THREE.CanvasTexture(this._dbgCanvas);
+    this._dbgTexture.colorSpace = THREE.SRGBColorSpace;
+    this._dbgPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.7, 0.124),
+      new THREE.MeshBasicMaterial({
+        map: this._dbgTexture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false
+      })
+    );
+    this._dbgPanel.position.set(0, -0.32, -0.7);
+    this._dbgPanel.renderOrder = 1000;
+    ctx.camera.add(this._dbgPanel);
+
     const loader = new GLTFLoader();
     loader.load(
       MODEL_URL,
@@ -151,6 +172,10 @@ export class PlayerAvatar {
     }
     this._legsAvailable = missingLegBones.length === 0;
     console.info(`[PlayerAvatar] legsAvailable=${this._legsAvailable}`);
+    this._dbg([
+      `legsAvailable=${this._legsAvailable}`,
+      missingLegBones.length ? `missing(脚)=${missingLegBones.join(",")}` : "脚ボーンOK"
+    ]);
 
     // groupがidentity transformの今のうちに、バインドポーズの情報を確定させる。
     this.group.updateWorldMatrix(true, true);
@@ -226,6 +251,22 @@ export class PlayerAvatar {
     const dirWorld = new THREE.Vector3().subVectors(toWorld, fromWorld).normalize();
     const boneWorldQuatInv = bone.getWorldQuaternion(new THREE.Quaternion()).invert();
     return dirWorld.applyQuaternion(boneWorldQuatInv).normalize();
+  }
+
+  /** 一時デバッグ表示：脚IKの状態を画面下に文字で出す（devtools不要で確認できるように） */
+  _dbg(lines) {
+    const c = this._dbgCtx;
+    c.clearRect(0, 0, 900, 160);
+    c.fillStyle = "rgba(0,0,0,0.75)";
+    c.fillRect(0, 0, 900, 160);
+    c.fillStyle = "#4ade80";
+    c.font = "bold 26px monospace";
+    let y = 34;
+    for (const line of lines) {
+      c.fillText(line, 16, y);
+      y += 30;
+    }
+    this._dbgTexture.needsUpdate = true;
   }
 
   _toVec(p, out) {
@@ -438,6 +479,14 @@ export class PlayerAvatar {
 
         this._solveLeg(leg, this._legAnkleTarget, null);
       }
+
+      // 一時デバッグ表示：しゃがみ・足踏みの状態が数値としてちゃんと動いているか確認する。
+      const dist = hipPos.distanceTo(this._legAnkleTarget); // 直近の右足の値のまま出す（目安）
+      this._dbg([
+        `hipY=${hipPos.y.toFixed(3)} restHipY=${this._restHipY.toFixed(3)} ankleY=${ankleY.toFixed(3)}`,
+        `crouch=${(this._restHipY - hipPos.y).toFixed(3)} walkT=${walkT.toFixed(2)} dist=${dist.toFixed(3)}`,
+        `upperLegL.w=${this._legs.left.upper.quaternion.w.toFixed(3)} upperLegR.w=${this._legs.right.upper.quaternion.w.toFixed(3)}`
+      ]);
     }
   }
 
