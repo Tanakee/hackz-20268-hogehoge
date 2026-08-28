@@ -51,6 +51,8 @@ export class SoundManager {
 
     this._offs = [
       ctx.game.on("hit", () => this._oneShot("hit", 0.9)),
+      // 雨を殴り飛ばしたとき：被弾音を小さく・高めのピッチで鳴らして「バシッ」という手応えに
+      ctx.game.on("swat", () => this._oneShot("hit", 0.4, 1.8)),
       ctx.game.on("clear", () => this._oneShot("clear", 0.9)),
       ctx.game.on("gameover", () => this._oneShot("gameover", 0.9)),
       ctx.game.on("stateChange", (state) => {
@@ -75,12 +77,13 @@ export class SoundManager {
     this.rain.play();
   }
 
-  _oneShot(name, volume = 1) {
+  _oneShot(name, volume = 1, rate = 1) {
     const buffer = this.buffers[name];
     const acx = this.listener?.context;
     if (!buffer || !acx) return;
     const source = acx.createBufferSource();
     source.buffer = buffer;
+    source.playbackRate.value = rate;
     const gain = acx.createGain();
     gain.gain.value = volume;
     source.connect(gain).connect(this.listener.getInput());

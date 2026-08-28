@@ -41,6 +41,9 @@ export const RAIN_TILT_ANGLE_DEG = 30;     // 度（斜めモード時、鉛直�
 
 export const PLAYER_HEAD_RADIUS = 0.15; // m
 export const PLAYER_HAND_RADIUS = 0.05; // m（実機フィードバックにより0.15→0.05へ縮小。手のひら程度のサイズに）
+// 手で雨粒を「殴り飛ばす」判定の半径。手は被弾しなくなり（頭のみ被弾）、代わりに
+// この範囲に入った雨粒を弾き飛ばす。当てて弾く手応えを出すため頭より大きめ。
+export const PLAYER_SWAT_RADIUS = 0.18; // m
 
 // 雨粒の当たり判定半径。core（PlayerCollider）とpresentation（RainRendererの見た目の
 // ストリーク半径）で同じ値を参照し、「見た目より判定が大きくて理不尽」を防ぐ。

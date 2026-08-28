@@ -1,14 +1,15 @@
 import * as THREE from "three";
-import { PLAYER_HEAD_RADIUS, PLAYER_HAND_RADIUS } from "../utils/constants.js";
+import { PLAYER_HEAD_RADIUS, PLAYER_SWAT_RADIUS } from "../utils/constants.js";
 
-const COLOR = 0x7cc4ff;
+const HEAD_COLOR = 0xff8a7c; // 守るべき当たり判定＝暖色
+const SWAT_COLOR = 0x7cf0c4; // 殴り飛ばす範囲＝アクション寄りの色
 const OPACITY = 0.16;
 
-function makeSphere(radius) {
+function makeSphere(radius, color) {
   return new THREE.Mesh(
     new THREE.SphereGeometry(radius, 16, 12),
     new THREE.MeshBasicMaterial({
-      color: COLOR,
+      color,
       transparent: true,
       opacity: OPACITY,
       depthWrite: false,
@@ -18,21 +19,20 @@ function makeSphere(radius) {
 }
 
 /**
- * 頭・両手の当たり判定範囲を、控えめな半透明の球で可視化する。PLAYING中のみ表示。
- * 半径はcore（PlayerCollider.headRadius / handRadius）と同じ定数を使うため、
- * 「実際にどこまでよければ避けられるか」がそのままプレイヤーに見える。
+ * 頭＝被弾判定（守る）、両手＝雨を殴り飛ばす範囲、を控えめな半透明の球で可視化する。
+ * PLAYING中のみ表示。半径は core（PlayerCollider.headRadius / swatRadius）と同じ定数。
  */
 export class ColliderIndicator {
   constructor(scene, ctx) {
     this.camera = ctx.camera;
     this.controllers = ctx.controllers ?? [];
 
-    this.headSphere = makeSphere(PLAYER_HEAD_RADIUS);
+    this.headSphere = makeSphere(PLAYER_HEAD_RADIUS, HEAD_COLOR);
     this.headSphere.visible = false;
     this.camera.add(this.headSphere);
 
     this.handSpheres = this.controllers.map((controller) => {
-      const mesh = makeSphere(PLAYER_HAND_RADIUS);
+      const mesh = makeSphere(PLAYER_SWAT_RADIUS, SWAT_COLOR);
       mesh.visible = false;
       controller.add(mesh);
       return mesh;

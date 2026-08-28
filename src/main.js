@@ -146,8 +146,15 @@ renderer.setAnimationLoop((time) => {
       const handLeft = poseFromController(controllerByHandedness("left"));
       const handRight = poseFromController(controllerByHandedness("right"));
 
-      const hits = playerCollider.findHits(head, handLeft, handRight, rainPhysics.positions);
+      // 被弾判定は頭のみ（手は被弾しなくなった）
+      const hits = playerCollider.findHits(head, rainPhysics.positions);
       for (const hit of hits) game.registerHit(hit);
+
+      // 手は雨粒を「殴り飛ばす」側。当たった粒は即再出現させ、swat イベントで演出/音/振動へ。
+      const swats = playerCollider.findSwats(handLeft, handRight, rainPhysics.positions);
+      for (const s of swats) {
+        game.emit("swat", { rainIndex: s.rainIndex, part: s.part, x: s.pos.x, y: s.pos.y, z: s.pos.z });
+      }
 
       recorder.record(
         dt,
@@ -161,9 +168,10 @@ renderer.setAnimationLoop((time) => {
         motionTracker.getLatest()
       );
 
-      // 被弾した雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に
+      // 被弾/殴り飛ばした雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に
       // 何フレームも重なり続けて多段ヒット（1回のニアミスでライフ全損）してしまう。
       for (const hit of hits) rainPhysics.respawn(hit.rainIndex);
+      for (const s of swats) rainPhysics.respawn(s.rainIndex);
     }
   } else if (game.state === "REPLAY") {
     ctx.replayer?.update(dt);
