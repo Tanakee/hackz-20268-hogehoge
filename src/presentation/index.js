@@ -7,6 +7,7 @@ import { StartScreen } from "./StartScreen.js";
 import { ScorePanel } from "./ScorePanel.js";
 import { WeatherWind } from "./WeatherWind.js";
 import { ReplayScreen } from "./ReplayScreen.js";
+import { ReplayFX } from "./ReplayFX.js";
 import { SoundManager } from "./SoundManager.js";
 import { ColliderIndicator } from "./ColliderIndicator.js";
 
@@ -28,6 +29,7 @@ export function createPresentation(scene, ctx) {
     new ScorePanel(scene, ctx),
     new WeatherWind(scene, ctx),
     new ReplayScreen(scene, ctx),
+    new ReplayFX(scene, ctx),
     new SoundManager(scene, ctx),
     new ColliderIndicator(scene, ctx)
   ];
