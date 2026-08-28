@@ -11,8 +11,11 @@ import * as THREE from "three";
  *  1) スピード線     … カメラ追従の集中線。開始直後に強く出て以降は薄く脈動
  *  2) 突入の一撃     … リプレイ開始の瞬間、白フラッシュ＋広がるリング＋ビネット
  *  3) アバター残像   … 記録された頭・両手の軌跡を、加算ブレンドの小球で尾を引かせる
+ *  4) 足元の衝撃波   … 頭の上下動から「踏み込み」を検出し、腰の真下・床の高さに
+ *                      リングを広げる（水たまりを猛スピードで踏み抜いてる感）。脚ボーンは触らない。
  *
  * 調整は下の CFG。実機で数値を詰める前提（描画はこの環境で確認できないため）。
+ * ※ STOMP_FOOT_Y は実機でアバターの足の高さに合わせて調整すること。
  */
 
 const REDUCED_MOTION =
@@ -46,7 +49,21 @@ const CFG = {
   TRAIL_HEAD_SIZE: 0.07,
   TRAIL_HAND_SIZE: 0.045,
   TRAIL_COLOR: new THREE.Color(0x8fe6ff),
-  TRAIL_MIN_FACTOR: 0.28 // 一番古い残像の縮小・減光率
+  TRAIL_MIN_FACTOR: 0.28, // 一番古い残像の縮小・減光率
+
+  // --- 足元の衝撃波 ---
+  STOMP_ENABLED: true,
+  STOMP_FOOT_Y: 0.0, // 床の高さ（m）。実機でアバターの足の位置に合わせて調整
+  STOMP_POOL: 10, // 同時に見えるリング数の上限
+  STOMP_LIFE: 0.55, // 1リングの寿命（秒）
+  STOMP_FROM: 0.14, // 生成時の半径（m）
+  STOMP_TO: 0.85, // 消滅時の半径（m）
+  STOMP_MIN_INTERVAL: 0.12, // 連続発生の最小間隔（秒）
+  STOMP_STEP_WIDTH: 0.11, // 左右の足の横オフセット（m）
+  STOMP_VMIN: 0.25, // これ以上の頭の落下速度(m/s)で「踏み込み」とみなす
+  STOMP_COLOR: 0xdff2ff,
+  STOMP_GLOW: true, // 常時、足元に淡いグローを置く
+  STOMP_GLOW_SIZE: 0.34 // グローの直径（m）
 };
 
 /** 中心から放射状に伸びる集中線のテクスチャ（中央は抜く）。 */
@@ -89,6 +106,22 @@ function makeVignetteTexture(px) {
   return t;
 }
 
+/** 中心が明るく縁が透明なグロー円。 */
+function makeGlowTexture(px) {
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = px;
+  const c = cv.getContext("2d");
+  const g = c.createRadialGradient(px / 2, px / 2, 0, px / 2, px / 2, px / 2);
+  g.addColorStop(0, "rgba(220,244,255,0.9)");
+  g.addColorStop(0.5, "rgba(180,230,255,0.25)");
+  g.addColorStop(1, "rgba(180,230,255,0)");
+  c.fillStyle = g;
+  c.fillRect(0, 0, px, px);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 /** ソフトな輪（ショックウェーブ用）。 */
 function makeRingTexture(px) {
   const cv = document.createElement("canvas");
@@ -117,6 +150,12 @@ export class ReplayFX {
     this._punchT = -1; // one-shot タイマー（<0 で無効）
     this._lastReplayer = undefined;
     this._buf = [[], [], []]; // head, handLeft, handRight の位置履歴
+
+    // 足元の衝撃波用
+    this._prevHeadY = null;
+    this._headVY = 0;
+    this._stompCd = 0;
+    this._stepSide = 1;
 
     this._disposables = [];
 
@@ -221,6 +260,52 @@ export class ReplayFX {
     this._trailCol = new THREE.Color();
     scene.add(this._trail);
     this._disposables.push(this._trail.geometry, this._trail.material);
+
+    // --- 足元の衝撃波（ワールド・床に寝かせたリングのプール＋常時グロー） ---
+    this._stompTex = makeRingTexture(256);
+    this._stompRings = [];
+    const ringGeo = new THREE.PlaneGeometry(1, 1);
+    this._disposables.push(this._stompTex, ringGeo);
+    for (let i = 0; i < CFG.STOMP_POOL; i++) {
+      const m = new THREE.Mesh(
+        ringGeo,
+        new THREE.MeshBasicMaterial({
+          map: this._stompTex,
+          color: CFG.STOMP_COLOR,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false
+        })
+      );
+      m.rotation.x = -Math.PI / 2; // 床に寝かせる（法線 +Y）
+      m.renderOrder = 2;
+      m.frustumCulled = false;
+      m.visible = false;
+      scene.add(m);
+      this._stompRings.push({ mesh: m, t: 0 });
+      this._disposables.push(m.material);
+    }
+
+    this._glowTex = makeGlowTexture(128);
+    this._footGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(CFG.STOMP_GLOW_SIZE, CFG.STOMP_GLOW_SIZE),
+      new THREE.MeshBasicMaterial({
+        map: this._glowTex,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false
+      })
+    );
+    this._footGlow.rotation.x = -Math.PI / 2;
+    this._footGlow.renderOrder = 2;
+    this._footGlow.frustumCulled = false;
+    this._footGlow.visible = false;
+    scene.add(this._footGlow);
+    this._disposables.push(this._glowTex, this._footGlow.geometry, this._footGlow.material);
   }
 
   _startPunch() {
@@ -326,14 +411,74 @@ export class ReplayFX {
     if (this._trail.instanceColor) this._trail.instanceColor.needsUpdate = true;
   }
 
+  _spawnStomp(head) {
+    const r =
+      this._stompRings.find((x) => !x.mesh.visible) ||
+      this._stompRings.reduce((a, b) => (a.t > b.t ? a : b));
+    const ox = this._stepSide * CFG.STOMP_STEP_WIDTH;
+    this._stepSide *= -1;
+    r.mesh.position.set(head.x + ox, CFG.STOMP_FOOT_Y + 0.01, head.z);
+    r.mesh.scale.setScalar(CFG.STOMP_FROM);
+    r.mesh.material.opacity = 1;
+    r.t = 0;
+    r.mesh.visible = true;
+  }
+
+  _updateStomp(dt, ctx) {
+    if (!CFG.STOMP_ENABLED) return;
+    const head = ctx.replayer?.frame?.head;
+
+    if (head) {
+      // 頭の縦速度から「落下 → 底で反転」した瞬間を踏み込みとみなす
+      if (this._prevHeadY !== null) {
+        const vy = (head.y - this._prevHeadY) / Math.max(dt, 1e-4);
+        if (
+          this._headVY < -CFG.STOMP_VMIN &&
+          vy > -CFG.STOMP_VMIN * 0.3 &&
+          this._stompCd <= 0
+        ) {
+          this._spawnStomp(head);
+          this._stompCd = CFG.STOMP_MIN_INTERVAL;
+        }
+        this._headVY = vy;
+      }
+      this._prevHeadY = head.y;
+
+      this._footGlow.visible = CFG.STOMP_GLOW;
+      this._footGlow.position.set(head.x, CFG.STOMP_FOOT_Y + 0.005, head.z);
+      // 動きの速さで少し明るく
+      const speed = Math.min(1, Math.abs(this._headVY) / 1.2);
+      this._footGlow.material.opacity = 0.18 + 0.22 * speed;
+    }
+
+    this._stompCd -= dt;
+    for (const r of this._stompRings) {
+      if (!r.mesh.visible) continue;
+      r.t += dt;
+      const k = r.t / CFG.STOMP_LIFE;
+      if (k >= 1) {
+        r.mesh.visible = false;
+        continue;
+      }
+      const s = CFG.STOMP_FROM + (CFG.STOMP_TO - CFG.STOMP_FROM) * k;
+      r.mesh.scale.set(s, s, s);
+      r.mesh.material.opacity = (1 - k) * (1 - k);
+    }
+  }
+
   _hideAll() {
     this._lines.visible = false;
     this._flash.visible = false;
     this._vig.visible = false;
     this._ring.visible = false;
     this._trail.visible = false;
+    this._footGlow.visible = false;
+    for (const r of this._stompRings) r.mesh.visible = false;
     this._punchT = -1;
     this._buf = [[], [], []];
+    this._prevHeadY = null;
+    this._headVY = 0;
+    this._stompCd = 0;
   }
 
   update(dt, ctx) {
@@ -356,6 +501,7 @@ export class ReplayFX {
       this._lastReplayer = ctx.replayer;
       this._buf = [[], [], []];
       this._rt = 0;
+      this._prevHeadY = null;
     }
 
     this._wasReplay = true;
@@ -364,6 +510,7 @@ export class ReplayFX {
     this._updatePunch(dt);
     this._updateLines();
     this._updateTrail(ctx);
+    this._updateStomp(dt, ctx);
   }
 
   dispose() {
@@ -373,6 +520,8 @@ export class ReplayFX {
     this.camera.remove(this._vig);
     this.camera.remove(this._ring);
     this.scene.remove(this._trail);
+    this.scene.remove(this._footGlow);
+    for (const r of this._stompRings) this.scene.remove(r.mesh);
     for (const d of this._disposables) d?.dispose?.();
   }
 }
