@@ -4,33 +4,35 @@ import { createPanel, roundRect } from "./_panel.js";
 
 /**
  * 「技術の無駄遣い」枠：本物の天気（風速・風向）を取ってきて、ゲーム内の斜め雨の
- * 向きと傾きに反映させる。外の天気が難易度を左右しても誰も得しないが、
- * on-theme（妄想の雨に現実の風を吹かせる）なのでやる。
+ * 向きと傾きに反映させる。on-theme（妄想の雨に現実の風を吹かせる）なのでやる。
  *
  * - データ元：Open-Meteo（APIキー不要・CORS開放・無料）
- * - 位置：?lat=&lon= のURL指定 → geolocation（ヘッドセットでは失敗しがち）→ FALLBACK（会場）
+ * - 位置：?lat=&lon= のURL指定 → geolocation（4秒で打ち切り）→ FALLBACK（会場座標）
  * - デモ用の強制指定：?wind=12&dir=270 （風速 m/s ・ 風向 deg。会場が無風でも演出できる）
- * - 北合わせ：?north=NN （スタート時に頭が向いている方角。北=0・東=90・時計回り）。
- *   WebXR は方位磁石を持たないので、ブースで1回測ってこの値を渡す運用。
- * - 取得できなければ ok=false のまま。RainPhysics は従来どおりのランダム風で動く。
+ *
+ * ■ 北合わせ（現実のコンパス風向 → 部屋の向き）
+ *   WebXR は方位磁石を持たないので、セッションの座標軸が真北から何度ズレているか
+ *   分からない。合わせ方は2通り（どちらも任意。やらなければ「開始時に北を向いていた」前提）：
+ *     1) ?north=NN … スタート時に頭が向いている方角（北=0・東=90・時計回り）を手動指定
+ *     2) 起動時キャリブUI … START中、矢印を出して「真北に向けてグリップ（squeeze）」。
+ *        その瞬間の頭のワールドyawを北の基準として記録する。
+ *        ※ StartScreen が「開始」にトリガー(select)を使うので、こちらは squeeze で拾う。
+ *        ※ キャリブせずトリガーを引けば従来どおり開始（キャリブは任意ステップ）。
  *
  * core への足あとは RainPhysics.setWindSource(this._wind) の1呼び出しのみ。
- * this._wind は「参照は固定・中身を非同期で書き換える」オブジェクトで、
- * RainPhysics 側は斜めモードに切り替わるたびに最新の中身を読む。
+ * this._wind は「参照は固定・中身を非同期で書き換える」オブジェクト。
  * ※ presentation → core はライフサイクル/セッター呼び出しのみ（DEVPLAN 接続ルール）。
  */
 
 // 天気が取れなかったとき・位置が分からないときに使う座標（会場）。
 const FALLBACK = { lat: 33.79434, lon: 130.63585, label: "会場" };
 // スタート時にプレイヤーの頭が向いている方角（度・北=0・東=90・時計回り）の既定値。
-// ?north=NN で上書きできる。0 = 「北を向いてスタートした」前提。
 const START_FACING_BEARING_DEG = 0;
-// 斜め雨の傾き角の上限（度）。これ以上倒すと「ほぼ真横」で不自然かつスポーンが大きくずれる。
+// 斜め雨の傾き角の上限（度）。これ以上倒すと不自然かつスポーンが大きくずれる。
 const MAX_TILT_DEG = 45;
-// 展示中ずっと開きっぱなしでも“今の風”に追従するよう定期的に取り直す。
 const REFRESH_MS = 5 * 60 * 1000;
-// geolocation がヘッドセットで返ってこないことがあるので短めに打ち切る。
 const GEO_TIMEOUT_MS = 4000;
+const DEG2RAD = Math.PI / 180;
 
 const DIR8 = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
 
@@ -41,45 +43,50 @@ function compass8(fromDeg) {
 }
 
 /**
- * 現実のコンパス風向 → ゲーム内の水平ドリフト方向（RainPhysics が使う「数学角」。windX=cos, windZ=sin）。
+ * 現実のコンパス風向 → ゲーム内の水平ドリフト方向（RainPhysics が使う「数学角」。
+ * RainPhysics 側は windX = cos(azimuthRad) * hs, windZ = sin(azimuthRad) * hs で使う）。
  *
- * - fromDeg   : 気象の「風向」= 風が吹いてくる方角。雨が流される向きは +180。
- * - facingDeg : スタート時にプレイヤーの頭が向いていた方角。
- *   → 風のドリフト方向を「プレイヤーの正面(-Z)からの時計回りの相対角」に変換する。
- * - 相対角 θ（プレイヤー正面=0・右回り）→ ワールド：正面 -Z、右 +X なので
- *   worldX = sin(θ)、worldZ = -cos(θ)。
+ * - fromDeg     : 気象の「風向」= 風が吹いてくる方角。雨が流される向きは +180。
+ * - northYawRad : 「真北」に対応する部屋のワールドyaw（yaw 0 = -Z, +90° = +X, 時計回り）。
+ *   ?north=F 指定なら northYawRad = -F*DEG2RAD、キャリブなら頭を北に向けた瞬間の yaw。
  *
- * facingDeg=0（北を向いてスタート）なら「北=-Z、東=+X」の素直な対応になる。
+ * driftYaw（風が流れていく向きのワールドyaw）= northYawRad + (fromDeg + 180)。
+ * ワールド：yaw θ → 向き (sinθ, 0, -cosθ) なので worldX=sin, worldZ=-cos。
  */
-function bearingToAzimuthRad(fromDeg, facingDeg) {
-  const relDeg = fromDeg + 180 - facingDeg;
-  const r = (relDeg * Math.PI) / 180;
-  const worldX = Math.sin(r);
-  const worldZ = -Math.cos(r);
-  return Math.atan2(worldZ, worldX);
+function windAzimuthRad(fromDeg, northYawRad) {
+  const driftYaw = northYawRad + (fromDeg + 180) * DEG2RAD;
+  return Math.atan2(-Math.cos(driftYaw), Math.sin(driftYaw));
 }
 
 /** 実風速(m/s) → 斜めの傾き角。無風で約6°、約6m/sで既定の30°、上限 MAX_TILT_DEG。 */
 function speedToTiltRad(ms) {
   const deg = Math.max(6, Math.min(MAX_TILT_DEG, 6 + ms * 4));
-  return (deg * Math.PI) / 180;
+  return deg * DEG2RAD;
 }
 
 export class WeatherWind {
   constructor(scene, ctx) {
     this.camera = ctx.camera;
     this.game = ctx.game;
+    this.controllers = ctx.controllers ?? [];
 
     const q = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
     const north = parseFloat(q.get("north"));
-    this._facingDeg = Number.isFinite(north) ? north : START_FACING_BEARING_DEG;
+    // 「真北」に対応するワールドyaw。?north=F があれば -F、なければ 0（＝開始時に北向き前提）。
+    this._northYawRad = Number.isFinite(north) ? -north * DEG2RAD : -START_FACING_BEARING_DEG * DEG2RAD;
+    // ?north= 手動指定 or ?nocalib のときはキャリブUIを出さない。
+    this._skipCalib = Number.isFinite(north) || q.has("nocalib");
     this._debug = q.has("wxdebug");
+    this._calibrated = false;
+    this._confirmT = 0; // キャリブ確定後の「✓」表示の残り秒
+
+    this._lastFromDeg = 0; // 直近の風向（キャリブ時に azimuth を計算し直すため）
 
     // RainPhysics に渡す参照。中身だけ後から書き換える。
     this._wind = {
       ok: false,
       azimuthRad: 0,
-      tiltRad: (RAIN_TILT_ANGLE_DEG * Math.PI) / 180,
+      tiltRad: RAIN_TILT_ANGLE_DEG * DEG2RAD,
       speedMs: 0,
       fromDeg: 0,
       dirLabel: "",
@@ -87,7 +94,7 @@ export class WeatherWind {
     };
     ctx.rainPhysics?.setWindSource?.(this._wind);
 
-    // START / READY のときだけ見せる小さな情報カード（視界追従）。
+    // 天気カード（START/READY 中に視界内へ）
     this.panel = createPanel({ worldWidth: 0.92, worldHeight: 0.2, pxWidth: 760, pxHeight: 168 });
     this.group = new THREE.Group();
     this.group.position.set(0, 0.34, -1.4);
@@ -95,21 +102,124 @@ export class WeatherWind {
     this.group.visible = false;
     this.camera.add(this.group);
 
+    // 北キャリブUI（矢印＋説明パネル）。START 中・未キャリブのときだけ表示。
+    this.calibGroup = new THREE.Group();
+    this.calibGroup.visible = false;
+    this._arrow = this._buildArrow();
+    this.calibGroup.add(this._arrow);
+    this.calibPanel = createPanel({ worldWidth: 0.7, worldHeight: 0.17, pxWidth: 620, pxHeight: 150 });
+    this.calibPanel.mesh.position.set(0, 0.14, 0);
+    this.calibGroup.add(this.calibPanel.mesh);
+    this.calibGroup.position.set(0, -0.12, -1.0);
+    this.camera.add(this.calibGroup);
+    this._drawCalibPanel(false);
+
+    this._fwd = new THREE.Vector3();
+    this._onSqueeze = () => this._calibrateNow();
+    for (const c of this.controllers) c?.addEventListener?.("squeezestart", this._onSqueeze);
+
     this._redraw();
     this._load();
     this._timer = setInterval(() => this._load(), REFRESH_MS);
   }
 
-  update(_dt, ctx) {
+  _buildArrow() {
+    const g = new THREE.Group();
+    this._arrowMat = new THREE.MeshBasicMaterial({
+      color: 0x7cf0ff,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false
+    });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 12), this._arrowMat);
+    shaft.rotation.x = -Math.PI / 2; // 軸を -Z 方向へ
+    shaft.position.z = -0.21;
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.13, 18), this._arrowMat);
+    head.rotation.x = -Math.PI / 2;
+    head.position.z = -0.49;
+    g.add(shaft, head);
+
+    // 先端の「北」ラベル
+    const lp = createPanel({ worldWidth: 0.16, worldHeight: 0.16, pxWidth: 128, pxHeight: 128 });
+    lp.draw((c, w, h) => {
+      c.fillStyle = "#7cf0ff";
+      c.font = "700 84px system-ui, sans-serif";
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillText("北", w / 2, h / 2 + 4);
+    });
+    lp.mesh.position.set(0, 0.12, -0.55);
+    this._labelPanel = lp;
+    g.add(lp.mesh);
+
+    g.traverse((o) => {
+      o.renderOrder = 10001;
+      if (o.frustumCulled !== undefined) o.frustumCulled = false;
+    });
+    return g;
+  }
+
+  _drawCalibPanel(confirmed) {
+    this.calibPanel.draw((c, w, h) => {
+      c.fillStyle = "rgba(8,16,28,0.74)";
+      roundRect(c, 4, 4, w - 8, h - 8, 18);
+      c.fill();
+      c.strokeStyle = "rgba(124,240,255,0.55)";
+      c.lineWidth = 2;
+      roundRect(c, 4, 4, w - 8, h - 8, 18);
+      c.stroke();
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      if (confirmed) {
+        c.fillStyle = "#5ad19b";
+        c.font = "700 40px system-ui, sans-serif";
+        c.fillText("✓ 北を設定しました", w / 2, h / 2);
+      } else {
+        c.fillStyle = "#eaf1ff";
+        c.font = "600 32px system-ui, sans-serif";
+        c.fillText("この矢印を真北に向けて", w / 2, h * 0.36);
+        c.fillStyle = "#7cf0ff";
+        c.font = "700 34px system-ui, sans-serif";
+        c.fillText("グリップを握る", w / 2, h * 0.62);
+        c.fillStyle = "#8fa6c8";
+        c.font = "400 22px system-ui, sans-serif";
+        c.fillText("スキップ：そのままトリガーで開始", w / 2, h * 0.86);
+      }
+    });
+  }
+
+  _calibrateNow() {
+    if (this._calibrated || this._skipCalib) return;
+    if (this.game?.state !== "START") return;
+    // 頭の向いているワールド方向（水平）から yaw を取る。yaw 0 = -Z, +90° = +X。
+    this.camera.getWorldDirection(this._fwd);
+    this._northYawRad = Math.atan2(this._fwd.x, -this._fwd.z);
+    this._calibrated = true;
+    this._confirmT = 1.5;
+    if (this._arrowMat) this._arrowMat.color.set(0x5ad19b);
+    this._drawCalibPanel(true);
+    // 直近の風向で azimuth を計算し直す
+    this._wind.azimuthRad = windAzimuthRad(this._lastFromDeg, this._northYawRad);
+    this._redraw();
+  }
+
+  update(dt, ctx) {
     const st = ctx.game?.state;
-    const show = st === "START" || st === "READY";
-    if (this.group.visible !== show) this.group.visible = show;
+
+    const showCard = st === "START" || st === "READY";
+    if (this.group.visible !== showCard) this.group.visible = showCard;
+
+    if (this._confirmT > 0) this._confirmT -= dt;
+    const showCalib =
+      !this._skipCalib && st === "START" && (!this._calibrated || this._confirmT > 0);
+    if (this.calibGroup.visible !== showCalib) this.calibGroup.visible = showCalib;
   }
 
   async _load() {
     const q = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
 
-    // デモ用の強制指定（会場が無風でも斜め雨を見せられる）
     const forceWind = parseFloat(q.get("wind"));
     const forceDir = parseFloat(q.get("dir"));
     if (Number.isFinite(forceWind) && Number.isFinite(forceDir)) {
@@ -170,10 +280,11 @@ export class WeatherWind {
   }
 
   _apply(ms, fromDeg, placeLabel) {
+    this._lastFromDeg = fromDeg;
     this._wind.ok = true;
     this._wind.speedMs = ms;
     this._wind.fromDeg = fromDeg;
-    this._wind.azimuthRad = bearingToAzimuthRad(fromDeg, this._facingDeg);
+    this._wind.azimuthRad = windAzimuthRad(fromDeg, this._northYawRad);
     this._wind.tiltRad = speedToTiltRad(ms);
     this._wind.dirLabel = compass8(fromDeg);
     this._wind.placeLabel = placeLabel;
@@ -212,8 +323,8 @@ export class WeatherWind {
         c.fillStyle = "#8fa6c8";
         c.font = "400 20px ui-monospace, monospace";
         c.fillText(
-          `from=${this._wind.fromDeg.toFixed(0)}° north=${this._facingDeg.toFixed(0)}° ` +
-            `→ drift(x,z)=(${Math.cos(a).toFixed(2)}, ${Math.sin(a).toFixed(2)}) ` +
+          `from=${this._wind.fromDeg.toFixed(0)}° northYaw=${((this._northYawRad * 180) / Math.PI).toFixed(0)}° ` +
+            `${this._calibrated ? "(calib)" : ""} → drift(x,z)=(${Math.cos(a).toFixed(2)}, ${Math.sin(a).toFixed(2)}) ` +
             `tilt=${((this._wind.tiltRad * 180) / Math.PI).toFixed(0)}°`,
           w / 2,
           h * 0.86
@@ -224,8 +335,12 @@ export class WeatherWind {
 
   dispose() {
     clearInterval(this._timer);
+    for (const c of this.controllers) c?.removeEventListener?.("squeezestart", this._onSqueeze);
     this._wind.ok = false; // RainPhysics を既定挙動へ戻す
     this.camera.remove(this.group);
+    this.camera.remove(this.calibGroup);
     this.panel.dispose();
+    this.calibPanel.dispose();
+    this._labelPanel?.dispose();
   }
 }
