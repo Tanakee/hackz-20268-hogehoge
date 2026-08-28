@@ -61,7 +61,9 @@ export class ScorePanel {
     this.panel = createPanel({ worldWidth: 0.98, worldHeight: 0.44, pxWidth: 900, pxHeight: 404 });
 
     this.group = new THREE.Group();
-    this.group.position.set(0, 0.33, -1.4); // StartScreen の RESULT パネルの上
+    // StartScreenのRESULTパネル（position.y=-0.02, worldHeight=0.6 → 上端0.28）と
+    // 隙間なく重なっていた（実機フィードバックにより発覚）ため、上端より少し上に離す。
+    this.group.position.set(0, 0.54, -1.4); // StartScreen の RESULT パネルの上
     this.group.add(this.panel.mesh);
     this.group.visible = false;
     this.camera.add(this.group);

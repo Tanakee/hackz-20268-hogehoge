@@ -40,11 +40,18 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.xr.enabled = true;
+// three.jsのreferenceSpaceTypeはデフォルトで既に'local-floor'だが、意図を明確にするため明示しておく。
+// ただし実機では、この"床"がデバイス側の床キャリブレーションに依存しており、必ずしも
+// 本当の床（y=0）を正確に指すとは限らないと判明した（RAIN_GROUND_Y側の対策を参照）。
+renderer.xr.setReferenceSpaceType("local-floor");
 container.appendChild(renderer.domElement);
 
 document.body.appendChild(
   ARButton.createButton(renderer, {
-    optionalFeatures: ["local-floor", "hand-tracking"]
+    // local-floorはゲーム全体の座標系（雨の地面判定・リプレイの座標再利用）の前提なので必須にする。
+    // 対応していない環境では、原点がずれたまま気付かずに動くよりエラーで気付けた方が良い。
+    requiredFeatures: ["local-floor"],
+    optionalFeatures: ["hand-tracking"]
   })
 );
 
@@ -139,7 +146,10 @@ renderer.setAnimationLoop((time) => {
       const hits = playerCollider.findHits(head, handLeft, handRight, rainPhysics.positions);
       for (const hit of hits) game.registerHit(hit);
 
-      recorder.record(dt, head, handLeft, handRight, rainPhysics.positions, hits, game.lives);
+      recorder.record(dt, head, handLeft, handRight, rainPhysics.positions, hits, game.lives, {
+        x: rainPhysics.windX,
+        z: rainPhysics.windZ
+      });
 
       // 被弾した雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に
       // 何フレームも重なり続けて多段ヒット（1回のニアミスでライフ全損）してしまう。
