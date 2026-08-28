@@ -74,16 +74,20 @@ const CFG = {
   REAL_SPEED: 7.0,
 
   SHOCKWAVE: true,
-  PROMPT_VEIL: true, // 素の StartScreen パネルを隠すためのぼけた暗がり。実機で不要なら false
+  // 以前は StartScreen の視界追従パネルを隠すためのぼけた暗がりだったが、
+  // StartScreen は START 中は非表示になったので不要（出しっぱなしだと目の前に
+  // 謎の暗がりが浮くだけになる）。
+  PROMPT_VEIL: false,
   VEIL_COLOR: 0x0a0e16,
   VEIL_OPACITY: 0.7,
 
   // ゲームスタート画面としての体裁（HOLD で出る「トリガーで開始」の看板）
+  // モード表示・トリガー案内も含めて全部ここ（ワールド固定）にまとめる。
+  // StartScreen の視界追従パネルとは表示タイミングが違って読みにくかったため統合した。
   START_PROMPT: true,
   PROMPT_LABEL: "トリガーで開始",
-  PROMPT_HINT: `雨をよけろ　—　${GAME_DURATION}秒`,
   PROMPT_W: 1.02,
-  PROMPT_H: 0.34,
+  PROMPT_H: 0.46,
   PROMPT_GAP: 0.16, // 副題の下端からの間隔(m)
   PROMPT_PULSE_HZ: 0.9 // 明滅の速さ
 };
@@ -295,7 +299,11 @@ export class TitleScreen {
     if (this._paintPanel) this.hud.add(this._paintPanel.mesh);
 
     this._startPrompt = CFG.START_PROMPT ? this._makeStartPrompt() : null;
-    if (this._startPrompt) this.world.add(this._startPrompt.mesh);
+    if (this._startPrompt) {
+      this.world.add(this._startPrompt.mesh);
+      this._lastSwat = !!ctx.swatMode;
+      this._drawStartPrompt(this._lastSwat);
+    }
 
     // アンカー
     this._anchor = new THREE.Vector3();
@@ -481,6 +489,29 @@ export class TitleScreen {
     cv.width = W;
     cv.height = H;
     const g = cv.getContext("2d");
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(CFG.PROMPT_W, CFG.PROMPT_H),
+      new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, toneMapped: false
+      })
+    );
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 12;
+    return { mesh, tex, cv, g, base: 0 };
+  }
+
+  /** 看板の中身を描き直す（モード切替のたび呼ぶ）。よける/殴り飛ばす・トリガー案内・ライフを1枚に集約。 */
+  _drawStartPrompt(swat) {
+    const p = this._startPrompt;
+    if (!p) return;
+    const { cv, g } = p;
+    const W = cv.width;
+    const H = cv.height;
     g.clearRect(0, 0, W, H);
     // 角丸の半透明バー＋シアンの縁（StartScreen と同系統）
     const pad = 6;
@@ -497,31 +528,23 @@ export class TitleScreen {
     g.shadowColor = "#8fd0ff";
     g.shadowBlur = 22;
     g.fillStyle = "#eef4ff";
-    g.font = `700 ${Math.round(H * 0.34)}px system-ui, sans-serif`;
-    g.fillText("▶  " + CFG.PROMPT_LABEL, W / 2, H * 0.4);
+    g.font = `700 ${Math.round(H * 0.2)}px system-ui, sans-serif`;
+    g.fillText("▶  " + CFG.PROMPT_LABEL, W / 2, H * 0.17);
     g.shadowBlur = 0;
-    // ヒント
+    // モード
+    g.fillStyle = swat ? "#7cf0c4" : "#7cc4ff";
+    g.font = `600 ${Math.round(H * 0.125)}px system-ui, sans-serif`;
+    g.fillText(`モード：${swat ? "殴り飛ばす" : "よける"}　—　${GAME_DURATION}秒`, W / 2, H * 0.4);
+    // トリガー案内
     g.fillStyle = "#9fb4d6";
-    g.font = `500 ${Math.round(H * 0.16)}px system-ui, sans-serif`;
-    g.fillText(CFG.PROMPT_HINT, W / 2, H * 0.72);
+    g.font = `500 ${Math.round(H * 0.1)}px system-ui, sans-serif`;
+    g.fillText("左トリガー：モード切替", W / 2, H * 0.58);
     // ライフ ♥×n
     g.fillStyle = "#ff8fa3";
-    g.font = `600 ${Math.round(H * 0.15)}px system-ui, sans-serif`;
-    g.fillText("♥".repeat(Math.max(1, PLAYER_LIVES | 0)), W / 2, H * 0.9);
+    g.font = `600 ${Math.round(H * 0.125)}px system-ui, sans-serif`;
+    g.fillText("♥".repeat(Math.max(1, PLAYER_LIVES | 0)), W / 2, H * 0.81);
 
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.minFilter = THREE.LinearFilter;
-    tex.generateMipmaps = false;
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(CFG.PROMPT_W, CFG.PROMPT_H),
-      new THREE.MeshBasicMaterial({
-        map: tex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, toneMapped: false
-      })
-    );
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 12;
-    return { mesh, tex, base: 0 };
+    p.tex.needsUpdate = true;
   }
 
   /** アンカー基準ローカル(x,y は目線相対 / z は前方が負) → ワールド */
@@ -695,6 +718,13 @@ export class TitleScreen {
       this._flash = 1; // 開始の確定フラッシュ
     }
     this._wasStart = isStart;
+    if (this._startPrompt) {
+      const swat = !!ctx.swatMode;
+      if (swat !== this._lastSwat) {
+        this._lastSwat = swat;
+        this._drawStartPrompt(swat);
+      }
+    }
     if (!this._built) {
       this.world.visible = false;
       this.hud.visible = false;

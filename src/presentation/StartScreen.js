@@ -8,11 +8,12 @@ const REDUCED_MOTION =
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /**
- * スタート画面 兼 結果画面（視界追従の3Dパネル）。
- * START / RESULT 状態のときだけ表示する。
- *   - START  : タイトル＋モード表示。右トリガーで `game.start()` ／
+ * スタート画面 兼 結果画面。
+ *   - START  : 表示は TitleScreen 側のワールド固定の看板に統合済み（視界追従パネルと
+ *              ワールド固定看板が同時に出て読みにくかったため、看板1枚に統一した）。
+ *              本クラスは非表示のまま入力だけ受ける：右トリガーで `game.start()` ／
  *              左トリガーで `ctx.swatMode`（よける⇔殴り飛ばす）を切替
- *   - RESULT : 「CLEAR / GAME OVER ＋ 被弾回数・生存時間」＋
+ *   - RESULT : 視界追従の3Dパネルに「CLEAR / GAME OVER ＋ 被弾回数・生存時間」を表示。
  *              右トリガーで「リプレイを見る」(`game.startReplay()`) ／
  *              左トリガーで「終了してスタートへ」(`game.restart()`)
  * リプレイを強制せず、結果を見た上でユーザーが選べるようにする（実機フィードバックにより変更）。
@@ -40,10 +41,9 @@ export class StartScreen {
       const state = this.game?.state;
       const hand = event?.target?.userData?.handedness;
       if (state === "START") {
-        // 左トリガー＝モード切替、右（または不明）＝開始
+        // 左トリガー＝モード切替、右（または不明）＝開始（表示は TitleScreen 側の看板）
         if (hand === "left") {
           this.ctx.swatMode = !this.ctx.swatMode;
-          this._sig = null; // イントロを描き直す
         } else {
           this.game.start();
         }
@@ -77,29 +77,6 @@ export class StartScreen {
     ];
   }
 
-  _drawIntro(swat) {
-    this.panel.draw((c, w, h) => {
-      frame(c, w, h);
-      c.textAlign = "center";
-      c.textBaseline = "middle";
-
-      c.fillStyle = "#eaf1ff";
-      c.font = "700 82px system-ui, sans-serif";
-      c.fillText(swat ? "雨を殴り飛ばせ" : "雨をよけろ", w / 2, h * 0.28);
-
-      c.fillStyle = swat ? "#7cf0c4" : "#7cc4ff";
-      c.font = "600 34px system-ui, sans-serif";
-      c.fillText(`モード：${swat ? "殴り飛ばす" : "よける"}`, w / 2, h * 0.52);
-
-      c.fillStyle = "#eaf1ff";
-      c.font = "600 34px system-ui, sans-serif";
-      c.fillText("右トリガー：開始", w / 2, h * 0.72);
-      c.fillStyle = "#9fb4d6";
-      c.font = "500 28px system-ui, sans-serif";
-      c.fillText("左トリガー：モード切替", w / 2, h * 0.87);
-    });
-  }
-
   _drawResult(r) {
     this.panel.draw((c, w, h) => {
       frame(c, w, h);
@@ -125,18 +102,16 @@ export class StartScreen {
 
   update(dt, ctx) {
     const state = ctx.game?.state;
-    const show = state === "START" || state === "RESULT";
+    // START の表示は TitleScreen 側のワールド固定看板に統合済み。ここは RESULT のみ表示する。
+    const show = state === "RESULT";
     this.group.visible = show;
     if (!show) return;
 
     const r = this._result;
-    const swat = !!ctx.swatMode;
-    const sig = r
-      ? `res|${r.outcome}|${r.hits}|${r.survived.toFixed(1)}`
-      : `intro|${swat ? "swat" : "dodge"}`;
+    if (!r) return;
+    const sig = `res|${r.outcome}|${r.hits}|${r.survived.toFixed(1)}`;
     if (sig !== this._sig) {
-      if (r) this._drawResult(r);
-      else this._drawIntro(swat);
+      this._drawResult(r);
       this._sig = sig;
     }
 
