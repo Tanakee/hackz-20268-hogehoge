@@ -3,6 +3,10 @@ import * as THREE from "three";
 // Vite は public/ 配下を配信するため、音声は public/sounds/ に置く。
 const SOUND_DIR = `${import.meta.env.BASE_URL}sounds/`;
 const RAIN_VOLUME = 0.5;
+// リプレイ中は雨が約6.4倍速で落ちる。音でも「本物の速さになった」ことを補強するため、
+// 雨ループのピッチと音量を上げる（6.4倍そのままだと甲高い雑音になるので控えめに）。
+const REPLAY_RAIN_RATE = 2.2;
+const REPLAY_RAIN_VOLUME = 0.62;
 
 /**
  * SE 管理：被弾音・クリア音・ゲームオーバー音・雨ループ（すべて CC0 素材）。
@@ -22,6 +26,8 @@ export class SoundManager {
     this.rain = null;
     this._rainTarget = 0;
     this._rainGain = 0;
+    this._rainRateTarget = 1;
+    this._rainRate = 1;
     this._lastReplayHitGameTime = null;
 
     const loader = new THREE.AudioLoader();
@@ -48,8 +54,14 @@ export class SoundManager {
       ctx.game.on("clear", () => this._oneShot("clear", 0.9)),
       ctx.game.on("gameover", () => this._oneShot("gameover", 0.9)),
       ctx.game.on("stateChange", (state) => {
-        this._rainTarget = state === "PLAYING" || state === "REPLAY" ? RAIN_VOLUME : 0;
-        if (state === "REPLAY") this._lastReplayHitGameTime = null;
+        if (state === "REPLAY") {
+          this._rainTarget = REPLAY_RAIN_VOLUME;
+          this._rainRateTarget = REPLAY_RAIN_RATE;
+          this._lastReplayHitGameTime = null;
+        } else {
+          this._rainTarget = state === "PLAYING" ? RAIN_VOLUME : 0;
+          this._rainRateTarget = 1;
+        }
       })
     ];
   }
@@ -85,7 +97,11 @@ export class SoundManager {
     }
 
     this._rainGain += (this._rainTarget - this._rainGain) * Math.min(1, dt * 2);
-    if (this.rain) this.rain.setVolume(this._rainGain);
+    this._rainRate += (this._rainRateTarget - this._rainRate) * Math.min(1, dt * 3);
+    if (this.rain) {
+      this.rain.setVolume(this._rainGain);
+      this.rain.setPlaybackRate(this._rainRate);
+    }
   }
 
   dispose() {
