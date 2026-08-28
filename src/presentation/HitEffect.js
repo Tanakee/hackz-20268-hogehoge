@@ -4,6 +4,8 @@ const FLASH_DURATION = 0.35; // 秒
 const MAX_OPACITY = 0.34;
 const HAPTIC_INTENSITY = 0.8;
 const HAPTIC_MS = 120;
+const SWAT_HAPTIC_INTENSITY = 0.5;
+const SWAT_HAPTIC_MS = 45;
 
 const REDUCED_MOTION =
   typeof window !== "undefined" &&
@@ -44,20 +46,22 @@ export class HitEffect {
         this._flash = 1;
         this._pulse();
       }),
+      // 雨を殴り飛ばしたとき：赤フラッシュは出さず、短く軽い振動だけ返す（当てた手応え）
+      ctx.game.on("swat", () => this._pulse(SWAT_HAPTIC_INTENSITY, SWAT_HAPTIC_MS)),
       ctx.game.on("stateChange", (state) => {
         if (state === "REPLAY") this._lastReplayHitGameTime = null;
       })
     ];
   }
 
-  _pulse() {
+  _pulse(intensity = HAPTIC_INTENSITY, ms = HAPTIC_MS) {
     const session = this.renderer?.xr?.getSession?.();
     if (!session) return;
     for (const source of session.inputSources) {
       const actuator =
         source.gamepad?.hapticActuators && source.gamepad.hapticActuators[0];
       try {
-        actuator?.pulse?.(HAPTIC_INTENSITY, HAPTIC_MS);
+        actuator?.pulse?.(intensity, ms);
       } catch (_) {
         /* ハプティクス非対応環境では無視 */
       }

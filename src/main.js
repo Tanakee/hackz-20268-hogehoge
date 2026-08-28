@@ -13,6 +13,10 @@ import { Recorder } from "./core/Recorder.js";
 import { Replayer } from "./core/Replayer.js";
 import { createPresentation } from "./presentation/index.js";
 
+// ゲームモードの初期値。既定は原モード（よける：頭・手とも被弾）。
+// ?mode=swat で「殴り飛ばしモード」開始。以降は START 画面の左トリガーで切替（ctx.swatMode）。
+const SWAT_MODE_INITIAL = new URLSearchParams(window.location.search).get("mode") === "swat";
+
 const container = document.getElementById("app");
 
 const scene = new THREE.Scene();
@@ -107,7 +111,8 @@ const ctx = {
   game,
   rainPhysics,
   replayer: null,
-  controllers
+  controllers,
+  swatMode: SWAT_MODE_INITIAL // START画面の左トリガーで切り替わる
 };
 
 game.on("stateChange", (state) => {
@@ -143,17 +148,41 @@ renderer.setAnimationLoop((time) => {
       const handLeft = poseFromController(controllerByHandedness("left"));
       const handRight = poseFromController(controllerByHandedness("right"));
 
-      const hits = playerCollider.findHits(head, handLeft, handRight, rainPhysics.positions);
+      // モードは START 画面の左トリガーで切り替わるので毎フレーム ctx から読む。
+      const swatMode = ctx.swatMode;
+      // 原モード：頭・手とも被弾。殴り飛ばしモード：手は被弾させず（null 渡し）、頭のみ。
+      const hits = swatMode
+        ? playerCollider.findHits(head, null, null, rainPhysics.positions)
+        : playerCollider.findHits(head, handLeft, handRight, rainPhysics.positions);
       for (const hit of hits) game.registerHit(hit);
 
-      recorder.record(dt, head, handLeft, handRight, rainPhysics.positions, hits, game.lives, {
-        x: rainPhysics.windX,
-        z: rainPhysics.windZ
-      });
+      // 殴り飛ばしモードのみ：手が捉えた雨粒を弾き飛ばし、swat イベントで演出/音/振動へ。
+      const swats = swatMode ? playerCollider.findSwats(handLeft, handRight, rainPhysics.positions) : [];
+      const swatEvents = swats.map((s) => ({
+        rainIndex: s.rainIndex,
+        part: s.part,
+        x: s.pos.x,
+        y: s.pos.y,
+        z: s.pos.z
+      }));
+      for (const e of swatEvents) game.emit("swat", e);
 
-      // 被弾した雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に
+      recorder.record(
+        dt,
+        head,
+        handLeft,
+        handRight,
+        rainPhysics.positions,
+        hits,
+        game.lives,
+        { x: rainPhysics.windX, z: rainPhysics.windZ },
+        swatEvents
+      );
+
+      // 被弾/殴り飛ばした雨粒はその場に留めず即座に再出現させる。放置すると同じ粒に
       // 何フレームも重なり続けて多段ヒット（1回のニアミスでライフ全損）してしまう。
       for (const hit of hits) rainPhysics.respawn(hit.rainIndex);
+      for (const s of swats) rainPhysics.respawn(s.rainIndex);
     }
   } else if (game.state === "REPLAY") {
     ctx.replayer?.update(dt);

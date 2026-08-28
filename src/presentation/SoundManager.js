@@ -29,6 +29,7 @@ export class SoundManager {
     this._rainRateTarget = 1;
     this._rainRate = 1;
     this._lastReplayHitGameTime = null;
+    this._lastReplaySwatGameTime = null;
 
     const loader = new THREE.AudioLoader();
     for (const name of ["rain", "hit", "clear", "gameover"]) {
@@ -51,6 +52,8 @@ export class SoundManager {
 
     this._offs = [
       ctx.game.on("hit", () => this._oneShot("hit", 0.9)),
+      // 雨を殴り飛ばしたとき：被弾音を小さく・高めのピッチで鳴らして「バシッ」という手応えに
+      ctx.game.on("swat", () => this._oneShot("hit", 0.4, 1.8)),
       ctx.game.on("clear", () => this._oneShot("clear", 0.9)),
       ctx.game.on("gameover", () => this._oneShot("gameover", 0.9)),
       ctx.game.on("stateChange", (state) => {
@@ -58,6 +61,7 @@ export class SoundManager {
           this._rainTarget = REPLAY_RAIN_VOLUME;
           this._rainRateTarget = REPLAY_RAIN_RATE;
           this._lastReplayHitGameTime = null;
+          this._lastReplaySwatGameTime = null;
         } else {
           this._rainTarget = state === "PLAYING" ? RAIN_VOLUME : 0;
           this._rainRateTarget = 1;
@@ -75,12 +79,13 @@ export class SoundManager {
     this.rain.play();
   }
 
-  _oneShot(name, volume = 1) {
+  _oneShot(name, volume = 1, rate = 1) {
     const buffer = this.buffers[name];
     const acx = this.listener?.context;
     if (!buffer || !acx) return;
     const source = acx.createBufferSource();
     source.buffer = buffer;
+    source.playbackRate.value = rate;
     const gain = acx.createGain();
     gain.gain.value = volume;
     source.connect(gain).connect(this.listener.getInput());
@@ -93,6 +98,10 @@ export class SoundManager {
       if (frame?.hits?.length && frame.gameTime !== this._lastReplayHitGameTime) {
         this._lastReplayHitGameTime = frame.gameTime;
         this._oneShot("hit", 0.9);
+      }
+      if (frame?.swats?.length && frame.gameTime !== this._lastReplaySwatGameTime) {
+        this._lastReplaySwatGameTime = frame.gameTime;
+        this._oneShot("hit", 0.4, 1.8);
       }
     }
 

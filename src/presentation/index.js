@@ -1,6 +1,7 @@
 import { RainRenderer } from "./RainRenderer.js";
 import { PlayerAvatar } from "./PlayerAvatar.js";
 import { HitEffect } from "./HitEffect.js";
+import { SwatEffect } from "./SwatEffect.js";
 import { HUD } from "./HUD.js";
 import { TitleScreen } from "./TitleScreen.js";
 import { StartScreen } from "./StartScreen.js";
@@ -23,6 +24,7 @@ export function createPresentation(scene, ctx) {
     new RainRenderer(scene, ctx),
     new PlayerAvatar(scene, ctx),
     new HitEffect(scene, ctx),
+    new SwatEffect(scene, ctx),
     new HUD(scene, ctx),
     new TitleScreen(scene, ctx),
     new StartScreen(scene, ctx),

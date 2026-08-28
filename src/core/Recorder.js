@@ -35,8 +35,20 @@ export class Recorder {
    * livesRemaining: このフレーム時点の GameManager.lives（HUD復元用）
    * wind: このフレーム時点の RainPhysics.windX/windZ（{ x, z }）。
    *   リプレイ中に雨のストリークの傾きを再現するために記録する。
+   * swats: このフレームで PlayerCollider.findSwats() が返した配列（空配列可）。
+   *   殴り飛ばした演出をリプレイでも再生するため、被弾(hits)と同じ形で記録する。
    */
-  record(dt, head, handLeft, handRight, rainPositions, hits = [], livesRemaining = null, wind = null) {
+  record(
+    dt,
+    head,
+    handLeft,
+    handRight,
+    rainPositions,
+    hits = [],
+    livesRemaining = null,
+    wind = null,
+    swats = []
+  ) {
     if (!this._recording) return;
 
     this._elapsed += dt;
@@ -49,7 +61,8 @@ export class Recorder {
       hits,
       livesRemaining,
       windX: wind?.x ?? 0,
-      windZ: wind?.z ?? 0
+      windZ: wind?.z ?? 0,
+      swats
     });
   }
 

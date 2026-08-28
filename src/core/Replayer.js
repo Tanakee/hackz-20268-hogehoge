@@ -39,6 +39,7 @@ function buildFrame({
   handRight,
   rainPositions,
   hits,
+  swats,
   livesRemaining,
   windX,
   windZ
@@ -53,6 +54,7 @@ function buildFrame({
     handRight,
     rainPositions,
     hits,
+    swats: swats ?? [],                                   // 殴り飛ばした演出をリプレイでも出すため（離散イベント）
     windX: windX ?? 0,                                    // 雨のストリークの傾き再現用
     windZ: windZ ?? 0
   };
@@ -109,6 +111,7 @@ export class Replayer {
       handRight: recorded.handRight,
       rainPositions: recorded.rainPositions,
       hits: recorded.hits ?? [],
+      swats: recorded.swats ?? [],
       livesRemaining: recorded.livesRemaining,
       windX: recorded.windX,
       windZ: recorded.windZ
@@ -128,6 +131,7 @@ export class Replayer {
     this._elapsed += dt * this.multiplier;
 
     const passedHits = [];
+    const passedSwats = [];
     while (
       this._index < this.frames.length - 1 &&
       this.frames[this._index + 1].t <= this._elapsed
@@ -135,6 +139,9 @@ export class Replayer {
       this._index += 1;
       if (this.frames[this._index].hits?.length) {
         passedHits.push(...this.frames[this._index].hits);
+      }
+      if (this.frames[this._index].swats?.length) {
+        passedSwats.push(...this.frames[this._index].swats);
       }
     }
 
@@ -150,6 +157,7 @@ export class Replayer {
         handRight: current.handRight,
         rainPositions: current.rainPositions,
         hits: passedHits.length ? passedHits : current.hits ?? [],
+        swats: passedSwats.length ? passedSwats : current.swats ?? [],
         livesRemaining: current.livesRemaining,
         windX: current.windX,
         windZ: current.windZ
@@ -170,6 +178,7 @@ export class Replayer {
       handRight: lerpPose(current.handRight, next.handRight, t),
       rainPositions: lerpFloatArray(current.rainPositions, next.rainPositions, t),
       hits: passedHits,
+      swats: passedSwats,
       livesRemaining: current.livesRemaining,
       windX: lerp(current.windX, next.windX, t),
       windZ: lerp(current.windZ, next.windZ, t)

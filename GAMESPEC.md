@@ -120,6 +120,14 @@ START → READY → PLAYING → (CLEAR または GAMEOVER) → RESULT → REPLAY
 - `hit` イベントの payload = `{ rainIndex, part, livesRemaining }`（`part` は `'head' | 'handLeft' | 'handRight'`。被弾のワールド座標は含まない）
 - **REPLAY中も同じ被弾演出（フラッシュ・SE・振動）を再生する**：記録された `hits` から復元する。プレイ中は一瞬で見逃しやすいため、リプレイで「どこで被弾してGAMEOVERになったか」を振り返れるようにする（実機フィードバックにより追加）
 
+### 5.1 殴り飛ばしモード（opt-in の別ゲームモード）
+
+- 既定は上記の原モード（よける）。`?mode=swat` で開始するか、START画面の**左トリガーでいつでも切替**できる（`ctx.swatMode`。右トリガーは常に「開始」）
+- 殴り飛ばしモードでは：**手は被弾しなくなり（頭のみ被弾）**、代わりに `PLAYER_SWAT_RADIUS = 0.18m` 以内に入った雨粒を弾き飛ばす（`PlayerCollider.findSwats()`）
+- 弾いた瞬間：短い振動＋被弾音を高ピッチ・小音量で再生＋着弾位置に小さな飛沫バースト（`SwatEffect.js`）。**REPLAY中も同じ演出を再生**（`swat` イベント・`frame.swats` を hits と同じ形で記録）
+- `ColliderIndicator` はモードに応じて色・手の球サイズを切り替える（原モード：寒色／頭・手ともhandRadius。殴りモード：頭は暖色、手は`swatRadius`相当のサイズでアクション色）
+- 原モードの挙動・記録データ形式には影響しない（`swats` は原モードでは常に空配列）
+
 ---
 
 ## 6. リプレイ機能（本ゲームの核）

@@ -10,7 +10,8 @@ const REDUCED_MOTION =
 /**
  * スタート画面 兼 結果画面（視界追従の3Dパネル）。
  * START / RESULT 状態のときだけ表示する。
- *   - START  : 「雨をよけろ / トリガーで開始」→ トリガーで `game.start()`
+ *   - START  : タイトル＋モード表示。右トリガーで `game.start()` ／
+ *              左トリガーで `ctx.swatMode`（よける⇔殴り飛ばす）を切替
  *   - RESULT : 「CLEAR / GAME OVER ＋ 被弾回数・生存時間」＋
  *              右トリガーで「リプレイを見る」(`game.startReplay()`) ／
  *              左トリガーで「終了してスタートへ」(`game.restart()`)
@@ -21,6 +22,7 @@ export class StartScreen {
   constructor(scene, ctx) {
     this.camera = ctx.camera;
     this.game = ctx.game;
+    this.ctx = ctx; // モード切替で ctx.swatMode を読み書きするため保持
     this.controllers = ctx.controllers ?? [];
     this._t = 0;
     this._sig = null;
@@ -36,12 +38,18 @@ export class StartScreen {
 
     this._onSelect = (event) => {
       const state = this.game?.state;
+      const hand = event?.target?.userData?.handedness;
       if (state === "START") {
-        this.game.start();
+        // 左トリガー＝モード切替、右（または不明）＝開始
+        if (hand === "left") {
+          this.ctx.swatMode = !this.ctx.swatMode;
+          this._sig = null; // イントロを描き直す
+        } else {
+          this.game.start();
+        }
         return;
       }
       if (state === "RESULT") {
-        const hand = event?.target?.userData?.handedness;
         if (hand === "right") this.game.startReplay();
         else if (hand === "left") this.game.restart();
       }
@@ -69,17 +77,26 @@ export class StartScreen {
     ];
   }
 
-  _drawIntro() {
+  _drawIntro(swat) {
     this.panel.draw((c, w, h) => {
       frame(c, w, h);
       c.textAlign = "center";
       c.textBaseline = "middle";
+
       c.fillStyle = "#eaf1ff";
-      c.font = "700 88px system-ui, sans-serif";
-      c.fillText("雨をよけろ", w / 2, h * 0.36);
+      c.font = "700 82px system-ui, sans-serif";
+      c.fillText(swat ? "雨を殴り飛ばせ" : "雨をよけろ", w / 2, h * 0.28);
+
+      c.fillStyle = swat ? "#7cf0c4" : "#7cc4ff";
+      c.font = "600 34px system-ui, sans-serif";
+      c.fillText(`モード：${swat ? "殴り飛ばす" : "よける"}`, w / 2, h * 0.52);
+
+      c.fillStyle = "#eaf1ff";
+      c.font = "600 34px system-ui, sans-serif";
+      c.fillText("右トリガー：開始", w / 2, h * 0.72);
       c.fillStyle = "#9fb4d6";
-      c.font = "500 40px system-ui, sans-serif";
-      c.fillText("トリガーを引いて開始", w / 2, h * 0.64);
+      c.font = "500 28px system-ui, sans-serif";
+      c.fillText("左トリガー：モード切替", w / 2, h * 0.87);
     });
   }
 
@@ -113,10 +130,13 @@ export class StartScreen {
     if (!show) return;
 
     const r = this._result;
-    const sig = r ? `res|${r.outcome}|${r.hits}|${r.survived.toFixed(1)}` : "intro";
+    const swat = !!ctx.swatMode;
+    const sig = r
+      ? `res|${r.outcome}|${r.hits}|${r.survived.toFixed(1)}`
+      : `intro|${swat ? "swat" : "dodge"}`;
     if (sig !== this._sig) {
       if (r) this._drawResult(r);
-      else this._drawIntro();
+      else this._drawIntro(swat);
       this._sig = sig;
     }
 
