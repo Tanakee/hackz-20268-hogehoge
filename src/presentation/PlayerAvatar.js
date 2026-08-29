@@ -81,6 +81,7 @@ export class PlayerAvatar {
     this._bendDir = new THREE.Vector3();
     this._poleVec = new THREE.Vector3();
     this._forwardWorld = new THREE.Vector3();
+    this._bodyForwardFlat = new THREE.Vector3();
     this._tmpQuat = new THREE.Quaternion();
     this._tmpQuat2 = new THREE.Quaternion();
     this._tmpVecA = new THREE.Vector3();
@@ -299,6 +300,11 @@ export class PlayerAvatar {
   /**
    * 腰→ターゲット。pole方向（膝の曲がる向き）はkneeHint（トラッカーの膝相対位置、
    * ワールド座標）があればそれを使い、無ければ「体の前方かつやや下」の近似にフォールバックする。
+   * ここでの「前方」は_bodyForwardFlat（ヨーのみ・水平）を使う。_forwardWorldは頭の
+   * ピッチ込みなので、下を向いた瞬間に脚の軸（ほぼ真下）と平行に近づいて縮退し、
+   * 膝の曲がる向きが突然反転する（実機フィードバックの「足首がとんでもないことになってる」
+   * の原因）。脚の曲がる向きは体（腰）の向きで決まるべきで、頭がどこを向いているかとは
+   * 無関係なので、ヨーのみの水平ベクトルを使えば縮退しない。
    */
   _solveLeg(leg, target, kneeHint) {
     const rootPos = leg.root.getWorldPosition(this._rootPos);
@@ -308,7 +314,7 @@ export class PlayerAvatar {
     if (kneeHint) {
       this._poleVec.subVectors(kneeHint, rootPos);
     } else {
-      this._poleVec.copy(this._forwardWorld).multiplyScalar(0.5);
+      this._poleVec.copy(this._bodyForwardFlat).multiplyScalar(0.5);
       this._poleVec.y -= 0.5;
     }
     this._poleVec.addScaledVector(axis, -this._poleVec.dot(axis)); // axis成分を除去
@@ -365,6 +371,9 @@ export class PlayerAvatar {
 
     this._euler.setFromQuaternion(headQuat, "YXZ");
     this._bodyYawQuat.setFromAxisAngle(Y_AXIS, this._euler.y).multiply(HEAD_FORWARD_FIX);
+    // ヨーのみ・水平（ピッチを含まない）の体の前方向。脚の向き計算はこちらを使う
+    // （_solveLeg のコメント参照）。
+    this._bodyForwardFlat.set(Math.sin(this._euler.y), 0, -Math.cos(this._euler.y));
 
     // Step1: groupを「Headの位置=headPos、Headの回転=ヨーのみ」になるよう逆算する。
     // Spineチェーン（Hips〜Head）はバインドポーズのまま固定し、groupごと動かす。
@@ -439,10 +448,10 @@ export class PlayerAvatar {
       );
       this._gaitPhase += dt * WALK_GAIT_FREQ * walkT;
 
-      // 体の右方向（左右の足の開き幅に使う）。_forwardWorldはHEAD_FORWARD_FIX適用前の
-      // 生のヨーなので、右方向もそれに揃える（腕IKのpole計算と同じ基準）。
-      const rightWorldX = -this._forwardWorld.z;
-      const rightWorldZ = this._forwardWorld.x;
+      // 体の右方向（左右の足の開き幅に使う）。_bodyForwardFlatはヨーのみ・水平なので、
+      // 頭を上下に振っても足の開き幅や踏み出し方向が乱れない。
+      const rightWorldX = -this._bodyForwardFlat.z;
+      const rightWorldZ = this._bodyForwardFlat.x;
 
       for (const side of ["left", "right"]) {
         const leg = this._legs[side];
@@ -454,7 +463,7 @@ export class PlayerAvatar {
         const step = Math.cos(this._gaitPhase + phaseOffset) * WALK_STEP_MAX * walkT;
 
         this._legStanceOffset.set(rightWorldX * LEG_STANCE_X * sign, 0, rightWorldZ * LEG_STANCE_X * sign);
-        this._legStepOffset.copy(this._forwardWorld).multiplyScalar(step);
+        this._legStepOffset.copy(this._bodyForwardFlat).multiplyScalar(step);
 
         this._legAnkleTarget
           .copy(hipPos)
