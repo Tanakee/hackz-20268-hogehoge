@@ -82,6 +82,8 @@ export class PlayerAvatar {
     this._poleVec = new THREE.Vector3();
     this._forwardWorld = new THREE.Vector3();
     this._bodyForwardFlat = new THREE.Vector3();
+    this._tmpVecC = new THREE.Vector3();
+    this._tmpHipsQuat = new THREE.Quaternion();
     this._tmpQuat = new THREE.Quaternion();
     this._tmpQuat2 = new THREE.Quaternion();
     this._tmpVecA = new THREE.Vector3();
@@ -217,6 +219,14 @@ export class PlayerAvatar {
         const footOffsetLocal = footPos.clone().sub(lowerPos).applyQuaternion(lowerWorldQuatInv);
         const footQuatRelToLower = lowerWorldQuatInv.clone().multiply(footWorldQuat);
 
+        // upper/lowerの「Hipsから見た相対回転」（バインド時、1回だけ）。
+        // _applyBoneDirectionStable が、Hipsの現在の向き（＝プレイヤーのヨーだけを反映する
+        // 安定した基準）にこれを再適用して「ひねりの基準姿勢」を作るのに使う（詳細は同メソッド参照）。
+        const hipWorldQuatInv = hip.getWorldQuaternion(new THREE.Quaternion()).invert();
+        const upperWorldQuat = upper.getWorldQuaternion(new THREE.Quaternion());
+        const upperBindRelToHips = hipWorldQuatInv.clone().multiply(upperWorldQuat);
+        const lowerBindRelToHips = hipWorldQuatInv.clone().multiply(lowerWorldQuat);
+
         this._legs[side] = {
           root: hip,
           upper,
@@ -227,7 +237,9 @@ export class PlayerAvatar {
           upperAxis: this._localAxis(upper, upperPos, lowerPos),
           lowerAxis: this._localAxis(lower, lowerPos, footPos),
           footOffsetLocal,
-          footQuatRelToLower
+          footQuatRelToLower,
+          upperBindRelToHips,
+          lowerBindRelToHips
         };
       }
     }
@@ -265,8 +277,15 @@ export class PlayerAvatar {
     const upperWorldDir = this._tmpVecA.subVectors(this._jointPos, rootPos).normalize();
     const lowerWorldDir = this._tmpVecB.subVectors(target, this._jointPos).normalize();
 
-    this._applyBoneDirection(limb.upper, limb.upperAxis, upperWorldDir);
-    this._applyBoneDirection(limb.lower, limb.lowerAxis, lowerWorldDir);
+    if (limb.upperBindRelToHips) {
+      // 脚：ひねりを安定させる版（_applyBoneDirectionStableのコメント参照）。
+      const hipsWorldQuat = limb.root.getWorldQuaternion(this._tmpHipsQuat);
+      this._applyBoneDirectionStable(limb.upper, limb.upperAxis, upperWorldDir, hipsWorldQuat, limb.upperBindRelToHips);
+      this._applyBoneDirectionStable(limb.lower, limb.lowerAxis, lowerWorldDir, hipsWorldQuat, limb.lowerBindRelToHips);
+    } else {
+      this._applyBoneDirection(limb.upper, limb.upperAxis, upperWorldDir);
+      this._applyBoneDirection(limb.lower, limb.lowerAxis, lowerWorldDir);
+    }
 
     return this._jointPos;
   }
@@ -329,6 +348,28 @@ export class PlayerAvatar {
     const parentWorldQuat = bone.parent.getWorldQuaternion(this._tmpQuat);
     this._tmpQuat2.setFromUnitVectors(axisLocal, dirWorld);
     bone.quaternion.copy(parentWorldQuat.invert().multiply(this._tmpQuat2));
+  }
+
+  /**
+   * _applyBoneDirectionの脚専用版。axisLocalをdirWorldへ向けるだけの
+   * setFromUnitVectors単体だと、軸まわりの「ひねり」がどの方向へ決まるかは
+   * 幾何的に不定（回転角が変わるたびに変化しうる）。腕は手首の実測姿勢で
+   * 上書きするので気にならないが、脚はそのままFootの回転に直結するため、
+   * 膝の曲がり方が変わるたびに足首が意図せず外向き/内向きへ回って見えて
+   * しまっていた（実機フィードバック「足首が外側向いたりしてる」）。
+   *
+   * そこで、常に安定しているHipsの現在の向き（プレイヤーのヨーだけを反映し、
+   * 頭のピッチや脚の曲げ方には影響されない）にバインド時の相対回転を
+   * 再適用して「ひねりの基準姿勢」を作り、そこから実際のaim方向までの
+   * “小さな差分”だけをsetFromUnitVectorsで追加する。脚はほぼ真っ直ぐ
+   * （差分が小さい）ので、この差分ぶんのひねり誤差は無視できるほど小さい。
+   */
+  _applyBoneDirectionStable(bone, axisLocal, dirWorld, hipsWorldQuat, bindRelToHips) {
+    const baseWorldQuat = this._tmpQuat.copy(hipsWorldQuat).multiply(bindRelToHips);
+    const baseAimWorld = this._tmpVecC.copy(axisLocal).applyQuaternion(baseWorldQuat).normalize();
+    const worldQuat = this._tmpQuat2.setFromUnitVectors(baseAimWorld, dirWorld).multiply(baseWorldQuat);
+    const parentWorldQuatInv = bone.parent.getWorldQuaternion(this._tmpQuat).invert();
+    bone.quaternion.copy(parentWorldQuatInv.multiply(worldQuat));
   }
 
   /**
