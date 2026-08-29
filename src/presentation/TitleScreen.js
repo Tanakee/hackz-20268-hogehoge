@@ -308,6 +308,9 @@ export class TitleScreen {
     // アンカー
     this._anchor = new THREE.Vector3();
     this._anchorYaw = new THREE.Quaternion();
+    // 他モジュール（WeatherWind等）が同じワールド固定位置に揃えられるよう、同じ参照を公開する。
+    // _build() が this._anchor/_anchorYaw をその場で書き換えるので、読む側は毎フレーム参照するだけでよい。
+    ctx.titleAnchor = { position: this._anchor, yaw: this._anchorYaw };
 
     // スクラッチ
     this._dummy = new THREE.Object3D();

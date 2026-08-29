@@ -12,12 +12,17 @@ import { createPanel, roundRect } from "./_panel.js";
  *
  * ■ 北合わせ（現実のコンパス風向 → 部屋の向き）
  *   WebXR は方位磁石を持たないので、セッションの座標軸が真北から何度ズレているか
- *   分からない。合わせ方は2通り（どちらも任意。やらなければ「開始時に北を向いていた」前提）：
+ *   分からない。合わせ方：
  *     1) ?north=NN … スタート時に頭が向いている方角（北=0・東=90・時計回り）を手動指定
- *     2) 起動時キャリブUI … START中、矢印を出して「真北に向けてグリップ（squeeze）」。
- *        その瞬間の頭のワールドyawを北の基準として記録する。
- *        ※ StartScreen が「開始」にトリガー(select)を使うので、こちらは squeeze で拾う。
- *        ※ キャリブせずトリガーを引けば従来どおり開始（キャリブは任意ステップ）。
+ *     2) 端末のコンパスセンサー（deviceorientationabsolute）が拾えれば、START中に
+ *        自動で1回だけ北合わせする（UIは出さない・完全に裏で行う）。
+ *        ※ 以前は「矢印を真北に向けてグリップ」という手動キャリブUIだったが、
+ *        そもそもユーザーが真北の方角を知らないと使えない上に、視界追従UIである
+ *        必要（頭の向きに矢印を出し続ける仕組み）があり、他要素をワールド固定に
+ *        揃えた結果ここだけ視界追従で浮いて見づらい、という2つの問題があったため撤去。
+ *     3) 上記いずれも無ければ「開始時に北を向いていた」前提（従来のデフォルト）。
+ *   ※ センサーが無い/信頼できない端末（PICOはマグネトメータを持たない可能性が高い）
+ *   では 3) にフォールバックするだけで、体験としては壊れない（風向がずれるだけの演出差）。
  *
  * ■ ?wxdebug … 実機で風向の符号を検証するための表示。
  *     - カードに「期待:◯◯ / 計算:◯◯ / ✓一致 or ✗ズレ!」の自己チェック行を出す
@@ -83,7 +88,9 @@ export class WeatherWind {
     this.scene = scene;
     this.camera = ctx.camera;
     this.game = ctx.game;
-    this.controllers = ctx.controllers ?? [];
+    // TitleScreen が公開しているワールド固定アンカー（同じ場所に天気カードを揃える）。
+    this._titleAnchor = ctx.titleAnchor ?? null;
+    this._tmpV = new THREE.Vector3();
 
     const q = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
     const north = parseFloat(q.get("north"));
@@ -91,7 +98,6 @@ export class WeatherWind {
     this._skipCalib = Number.isFinite(north) || q.has("nocalib");
     this._debug = q.has("wxdebug");
     this._calibrated = false;
-    this._confirmT = 0;
     this._lastFromDeg = 0;
     // ?wxdebug の「回転向き」自己チェック用：直前の (dir, 流れ先ワールド方位)。
     this._prevSample = null;
@@ -109,6 +115,7 @@ export class WeatherWind {
     ctx.rainPhysics?.setWindSource?.(this._wind);
 
     // 天気カード（START/READY 中に視界内へ）。debug 時は縦を伸ばして自己チェック行を入れる。
+    // TitleScreen の看板と同じくワールド固定（視界追従だと看板側と挙動が揃わず見づらいため）。
     this.panel = createPanel({
       worldWidth: 0.92,
       worldHeight: this._debug ? 0.3 : 0.2,
@@ -116,22 +123,9 @@ export class WeatherWind {
       pxHeight: this._debug ? 252 : 168
     });
     this.group = new THREE.Group();
-    this.group.position.set(0, 0.34, -1.4);
     this.group.add(this.panel.mesh);
     this.group.visible = false;
-    this.camera.add(this.group);
-
-    // 北キャリブUI（矢印＋説明パネル）
-    this.calibGroup = new THREE.Group();
-    this.calibGroup.visible = false;
-    this._arrow = this._buildArrow(0x7cf0ff, "北");
-    this.calibGroup.add(this._arrow);
-    this.calibPanel = createPanel({ worldWidth: 0.7, worldHeight: 0.17, pxWidth: 620, pxHeight: 150 });
-    this.calibPanel.mesh.position.set(0, 0.14, 0);
-    this.calibGroup.add(this.calibPanel.mesh);
-    this.calibGroup.position.set(0, -0.12, -1.0);
-    this.camera.add(this.calibGroup);
-    this._drawCalibPanel(false);
+    this.scene.add(this.group);
 
     // ?wxdebug：ワールドに「雨はこっちへ流れるはず」矢印（マゼンタ）。原点まわりに置く。
     if (this._debug) {
@@ -142,12 +136,45 @@ export class WeatherWind {
     }
 
     this._fwd = new THREE.Vector3();
-    this._onSqueeze = () => this._calibrateNow();
-    for (const c of this.controllers) c?.addEventListener?.("squeezestart", this._onSqueeze);
+    this._attachAutoNorth();
 
     this._redraw();
     this._load();
     this._timer = setInterval(() => this._load(), REFRESH_MS);
+  }
+
+  /** 端末のコンパスセンサーが拾えれば、START中に1回だけ裏で北合わせする（UIなし）。 */
+  _attachAutoNorth() {
+    if (typeof window === "undefined" || this._skipCalib) return;
+    this._onOrient = (e) => {
+      if (this._calibrated || this._skipCalib) return;
+      if (this.game?.state !== "START") return;
+      const hasCompass = e.absolute === true || typeof e.webkitCompassHeading === "number";
+      if (!hasCompass || !Number.isFinite(e.alpha)) return;
+      const headingDeg = typeof e.webkitCompassHeading === "number" ? e.webkitCompassHeading : (360 - e.alpha) % 360;
+      this.camera.getWorldDirection(this._fwd);
+      const cameraYaw = Math.atan2(this._fwd.x, -this._fwd.z);
+      this._northYawRad = cameraYaw - headingDeg * DEG2RAD;
+      this._calibrated = true;
+      this._wind.azimuthRad = windAzimuthRad(this._lastFromDeg, this._northYawRad);
+      this._redraw();
+      this._detachAutoNorth();
+    };
+    window.addEventListener("deviceorientationabsolute", this._onOrient);
+    window.addEventListener("deviceorientation", this._onOrient);
+  }
+
+  _detachAutoNorth() {
+    if (!this._onOrient) return;
+    window.removeEventListener("deviceorientationabsolute", this._onOrient);
+    window.removeEventListener("deviceorientation", this._onOrient);
+    this._onOrient = null;
+  }
+
+  /** TitleScreen のワールド固定アンカー基準ローカル(x,y は目線相対 / z は前方が負) → ワールド。 */
+  _l2wAnchor(lx, ly, lz, out) {
+    const a = this._titleAnchor;
+    return out.set(lx, ly, lz).applyQuaternion(a.yaw).add(a.position);
   }
 
   _buildArrow(colorHex, labelText) {
@@ -188,58 +215,17 @@ export class WeatherWind {
     return g;
   }
 
-  _drawCalibPanel(confirmed) {
-    this.calibPanel.draw((c, w, h) => {
-      c.fillStyle = "rgba(8,16,28,0.74)";
-      roundRect(c, 4, 4, w - 8, h - 8, 18);
-      c.fill();
-      c.strokeStyle = "rgba(124,240,255,0.55)";
-      c.lineWidth = 2;
-      roundRect(c, 4, 4, w - 8, h - 8, 18);
-      c.stroke();
-      c.textAlign = "center";
-      c.textBaseline = "middle";
-      if (confirmed) {
-        c.fillStyle = "#5ad19b";
-        c.font = "700 40px system-ui, sans-serif";
-        c.fillText("✓ 北を設定しました", w / 2, h / 2);
-      } else {
-        c.fillStyle = "#eaf1ff";
-        c.font = "600 32px system-ui, sans-serif";
-        c.fillText("この矢印を真北に向けて", w / 2, h * 0.36);
-        c.fillStyle = "#7cf0ff";
-        c.font = "700 34px system-ui, sans-serif";
-        c.fillText("グリップを握る", w / 2, h * 0.62);
-        c.fillStyle = "#8fa6c8";
-        c.font = "400 22px system-ui, sans-serif";
-        c.fillText("スキップ：そのままトリガーで開始", w / 2, h * 0.86);
-      }
-    });
-  }
-
-  _calibrateNow() {
-    if (this._calibrated || this._skipCalib) return;
-    if (this.game?.state !== "START") return;
-    this.camera.getWorldDirection(this._fwd);
-    this._northYawRad = Math.atan2(this._fwd.x, -this._fwd.z);
-    this._calibrated = true;
-    this._confirmT = 1.5;
-    this._arrow.userData.mat?.color.set(0x5ad19b);
-    this._drawCalibPanel(true);
-    this._wind.azimuthRad = windAzimuthRad(this._lastFromDeg, this._northYawRad);
-    this._redraw();
-  }
-
   update(dt, ctx) {
     const st = ctx.game?.state;
 
     const showCard = st === "START" || st === "READY";
     if (this.group.visible !== showCard) this.group.visible = showCard;
-
-    if (this._confirmT > 0) this._confirmT -= dt;
-    const showCalib =
-      !this._skipCalib && st === "START" && (!this._calibrated || this._confirmT > 0);
-    if (this.calibGroup.visible !== showCalib) this.calibGroup.visible = showCalib;
+    if (showCard && this._titleAnchor) {
+      // TitleScreen の看板の右どなり、同じ高さ・同じ距離にワールド固定で置く。
+      this._l2wAnchor(0.95, 0.3, -1.95, this._tmpV);
+      this.group.position.copy(this._tmpV);
+      this.group.quaternion.copy(this._titleAnchor.yaw);
+    }
 
     // ?wxdebug のドリフト矢印：ゲーム/リプレイ中、計算上の雨の流れる向きを指す。
     if (this._driftArrow) {
@@ -406,16 +392,13 @@ export class WeatherWind {
 
   dispose() {
     clearInterval(this._timer);
-    for (const c of this.controllers) c?.removeEventListener?.("squeezestart", this._onSqueeze);
+    this._detachAutoNorth();
     this._wind.ok = false;
-    this.camera.remove(this.group);
-    this.camera.remove(this.calibGroup);
+    this.scene.remove(this.group);
     if (this._driftArrow) {
       this.scene.remove(this._driftArrow);
       this._driftArrow.userData.labelPanel?.dispose();
     }
     this.panel.dispose();
-    this.calibPanel.dispose();
-    this._arrow.userData.labelPanel?.dispose();
   }
 }
